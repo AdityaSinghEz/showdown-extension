@@ -10,9 +10,13 @@
     "zip": "wxt zip",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "replays:download": "tsx scripts/download-replays.ts",
+    "dataset:build": "tsx scripts/build-dataset.ts"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
     "wxt": "^0.21.4"

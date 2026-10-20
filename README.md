@@ -11,6 +11,31 @@ Implemented:
 
 When a battle ends, the console shows the full state and a turn-by-turn decision table.
 
+- Dataset pipeline (runs in Node, outside the browser): downloads public Gen 9 Random Battle replays, replays each log through the same battle recorder, and writes one compact record per game to `data/games.jsonl`.
+
+## Building a dataset
+
+```bash
+# 1. Download a small batch first (about 1 request per second)
+npm run replays:download -- --limit 20
+
+# 2. Target a rating range
+npm run replays:download -- --limit 200 --min-rating 1700 --max-rating 1900
+
+# 3. Convert downloads into records and print a summary
+npm run dataset:build
+```
+
+Downloads go to `data/raw/<id>.json` (existing files are skipped, so runs can be repeated to top up) and records to `data/games.jsonl`. The `data/` folder is git-ignored.
+
+Games are excluded when a player has no rating, the game has no result or ends in a tie, or it ends in a forfeit before turn 5. The summary reports how many were skipped for each reason, the games per rating band, and sanity checks such as how often the higher-rated player won.
+
+Notes on the data:
+
+- Only replays that players chose to upload are available, so the sample is not every game played. Treat it as biased toward games players wanted to keep.
+- The listing is ordered by upload time, not rating, so high-rating games are rare in a plain download. Use `--min-rating` with more `--pages` to collect them.
+- Keep the dataset private. If you ever publish it, remove or hash player names.
+
 ## Architecture
 
 ```
@@ -38,6 +63,9 @@ lib/protocol/parser.ts  ->  lib/battle/state.ts (BattleTracker)
 | `lib/battle/state.ts` | Reduce protocol events into battle state |
 | `lib/battle/turns.ts` | Record actions, damage, faints and chance events per turn (singles) |
 | `lib/battle/summary.ts` | Human-readable decision table |
+| `lib/replay/` | Replay service types, polite HTTP client, and download selection |
+| `lib/dataset/record.ts` | Game records, filtering rules, rating bands and summaries |
+| `scripts/` | Command-line tools for downloading replays and building the dataset |
 | `entrypoints/` | Thin WXT wiring only; no business logic |
 
 `lib/` has no browser dependencies and is fully unit-tested.
