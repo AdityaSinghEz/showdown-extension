@@ -25,23 +25,23 @@ async function main(): Promise<void> {
 
   const files = (await readdir(rawDir)).filter((f) => f.endsWith('.json')).sort();
   const records: GameRecord[] = [];
-  const skipped = new Map<SkipReason | 'unreadable', number>();
-  const bump = (reason: SkipReason | 'unreadable'): void => {
-    skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
+  const skipped = new Map<SkipReason | 'unreadable', string[]>();
+  const bump = (reason: SkipReason | 'unreadable', id: string): void => {
+    skipped.set(reason, [...(skipped.get(reason) ?? []), id]);
   };
 
   for (const file of files) {
     try {
       const replay = parseReplayJson(JSON.parse(await readFile(join(rawDir, file), 'utf8')));
       if (!replay) {
-        bump('unreadable');
+        bump('unreadable', file);
         continue;
       }
       const result = buildGameRecord(replay);
       if (result.ok) records.push(result.record);
-      else bump(result.reason);
+      else bump(result.reason, replay.id);
     } catch {
-      bump('unreadable');
+      bump('unreadable', file);
     }
   }
 
@@ -50,7 +50,11 @@ async function main(): Promise<void> {
 
   const summary = summarize(records);
   console.log(`Read ${files.length} replays, kept ${summary.games}, wrote ${target}`);
-  for (const [reason, count] of skipped) console.log(`  skipped (${reason}): ${count}`);
+  for (const [reason, ids] of skipped) {
+    const shown = ids.slice(0, 5).join(', ');
+    const more = ids.length > 5 ? `, ... +${ids.length - 5} more` : '';
+    console.log(`  skipped (${reason}): ${ids.length}  [${shown}${more}]`);
+  }
   console.log(`Average turns: ${summary.averageTurns.toFixed(1)}  Forfeits: ${summary.forfeits}`);
   console.log(`p1 win rate: ${(summary.p1WinRate * 100).toFixed(1)}%`);
   console.log(`Higher-rated player won: ${(summary.higherRatedWinRate * 100).toFixed(1)}%`);

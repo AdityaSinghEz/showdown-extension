@@ -111,6 +111,29 @@ export function earlyForfeitReplay(): ReplayJson {
   return playedReplay({ id: 'gen9randombattle-101', log });
 }
 
+/**
+ * A rated game in which both players disconnect and rejoin. The server
+ * re-announces them without ratings, as seen in real replays.
+ */
+export function reconnectReplay(): ReplayJson {
+  const log = makeLog({
+    p1: 'Alice',
+    p2: 'Bob',
+    r1: 1500,
+    r2: 1520,
+    body: [
+      ...PLAYED_BODY.slice(0, 8),
+      '|player|p2|',
+      '|player|p1|',
+      '|player|p1|Alice|102|',
+      '|player|p2|Bob|lance-gen1rb|',
+      ...PLAYED_BODY.slice(8),
+      '|win|Bob',
+    ],
+  });
+  return playedReplay({ id: 'gen9randombattle-106', log });
+}
+
 /** A game with no ratings for either player. */
 export function unratedReplay(): ReplayJson {
   const log = makeLog({

@@ -30,6 +30,31 @@ describe('BattleTracker', () => {
     expect(tracker.get(ROOM)?.players.p1?.rating).toBeNull();
   });
 
+  it('keeps a known rating when the same player is re-announced without one', () => {
+    const tracker = new BattleTracker();
+    tracker.ingest(message('|player|p1|Alice|1|1500', '|player|p2|Bob|2|1480'));
+    tracker.ingest(message('|player|p1|Alice|1|'));
+    expect(tracker.get(ROOM)?.players.p1).toEqual({ slot: 'p1', name: 'Alice', rating: 1500 });
+  });
+
+  it('ignores the empty announcement sent when a player leaves', () => {
+    const tracker = new BattleTracker();
+    tracker.ingest(message('|player|p2|Bob|2|1480', '|player|p2|'));
+    expect(tracker.get(ROOM)?.players.p2).toEqual({ slot: 'p2', name: 'Bob', rating: 1480 });
+  });
+
+  it('takes a newly announced rating over the known one', () => {
+    const tracker = new BattleTracker();
+    tracker.ingest(message('|player|p1|Alice|1|1500', '|player|p1|Alice|1|1520'));
+    expect(tracker.get(ROOM)?.players.p1?.rating).toBe(1520);
+  });
+
+  it('does not carry a rating over to a different player in the same slot', () => {
+    const tracker = new BattleTracker();
+    tracker.ingest(message('|player|p1|Alice|1|1500', '|player|p1|Carol|3|'));
+    expect(tracker.get(ROOM)?.players.p1).toEqual({ slot: 'p1', name: 'Carol', rating: null });
+  });
+
   it('fires the end listener exactly once', () => {
     const tracker = new BattleTracker();
     const listener = vi.fn();

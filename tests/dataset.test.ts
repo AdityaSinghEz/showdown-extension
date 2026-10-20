@@ -11,6 +11,7 @@ import {
   earlyForfeitReplay,
   lateForfeitReplay,
   playedReplay,
+  reconnectReplay,
   tiedReplay,
   unfinishedReplay,
   unratedReplay,
@@ -80,6 +81,14 @@ describe('buildGameRecord', () => {
     ['early-forfeit', earlyForfeitReplay()],
   ] as const)('skips %s games', (reason, replay) => {
     expect(buildGameRecord(replay)).toEqual({ ok: false, reason });
+  });
+
+  it('keeps ratings for players who disconnect and rejoin', () => {
+    const result = buildGameRecord(reconnectReplay());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.players.p1.rating).toBe(1500);
+    expect(result.record.players.p2.rating).toBe(1520);
   });
 
   it('keeps late forfeits and flags them', () => {

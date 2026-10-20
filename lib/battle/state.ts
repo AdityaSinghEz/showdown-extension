@@ -123,8 +123,14 @@ export class BattleTracker {
     switch (event.command) {
       case 'player': {
         const [slot, name, , rating] = event.args;
+        // An empty name means the player left the slot; nothing to record.
         if (isPlayerSlot(slot) && name) {
-          state.players[slot] = { slot, name, rating: parseRating(rating) };
+          const previous = state.players[slot];
+          const announced = parseRating(rating);
+          // The server re-announces a player on reconnect, usually without a
+          // rating. Keep the rating already known for that same player.
+          const known = previous?.name === name ? previous.rating : null;
+          state.players[slot] = { slot, name, rating: announced ?? known };
         }
         break;
       }
