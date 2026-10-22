@@ -114,6 +114,13 @@ export interface SideState {
   pendingReplacement: boolean;
   /** Tera type announced but not yet attached to a move. */
   pendingTera: string | null;
+  /**
+   * Last known HP fraction (0 to 1) of every Pokemon revealed so far, keyed
+   * by nickname. Pokemon that have not appeared yet are absent.
+   */
+  roster: Record<string, number>;
+  /** True once this side has terastallized; Tera can be used once per game. */
+  teraUsed: boolean;
 }
 
 /** Frozen view of one side at the end of a turn. */
@@ -121,6 +128,14 @@ export interface SideSnapshot {
   active: ActivePokemon | null;
   /** Pokemon not yet fainted, or `null` if the team size is unknown. */
   remaining: number | null;
+  /**
+   * Total team HP as a sum of fractions: the last known HP of each revealed
+   * Pokemon plus 1 for each unrevealed one. `null` if the team size is
+   * unknown. A full team of six is `6`.
+   */
+  teamHp: number | null;
+  /** True once this side has terastallized. */
+  teraUsed: boolean;
 }
 
 /**

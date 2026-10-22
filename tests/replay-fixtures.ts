@@ -175,3 +175,27 @@ export function lateForfeitReplay(): ReplayJson {
   });
   return playedReplay({ id: 'gen9randombattle-105', log });
 }
+
+/** A game where a player whose name contains a space times out. */
+export function spacedNameTimeoutReplay(): ReplayJson {
+  const log = makeLog({
+    p1: 'sasha thumper',
+    p2: 'Bob',
+    r1: 1500,
+    r2: 1520,
+    body: [...PLAYED_BODY, '|-message|sasha thumper lost due to inactivity.', '|win|Bob'],
+  });
+  return playedReplay({ id: 'gen9randombattle-107', log });
+}
+
+/** A forfeit message that names someone who is not a player in the game. */
+export function strangerForfeitReplay(): ReplayJson {
+  const log = makeLog({
+    p1: 'Alice',
+    p2: 'Bob',
+    r1: 1500,
+    r2: 1520,
+    body: [...PLAYED_BODY, '|-message|Carol forfeited.', '|win|Bob'],
+  });
+  return playedReplay({ id: 'gen9randombattle-108', log });
+}

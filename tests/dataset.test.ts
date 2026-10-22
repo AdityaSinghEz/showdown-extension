@@ -12,6 +12,8 @@ import {
   lateForfeitReplay,
   playedReplay,
   reconnectReplay,
+  spacedNameTimeoutReplay,
+  strangerForfeitReplay,
   tiedReplay,
   unfinishedReplay,
   unratedReplay,
@@ -99,6 +101,40 @@ describe('buildGameRecord', () => {
   it('can be configured to keep early forfeits', () => {
     const result = buildGameRecord(earlyForfeitReplay(), { minTurnsForForfeit: 0 });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('forfeit detection', () => {
+  it('names the slot that forfeited', () => {
+    const early = buildGameRecord(earlyForfeitReplay(), { minTurnsForForfeit: 0 });
+    expect(early.ok && early.record.forfeitedBy).toBe('p1');
+    const late = buildGameRecord(lateForfeitReplay());
+    expect(late.ok && late.record.forfeitedBy).toBe('p1');
+    expect(late.ok && late.record.winner).toBe('p2');
+  });
+
+  it('handles inactivity losses and names containing spaces', () => {
+    const result = buildGameRecord(spacedNameTimeoutReplay());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record).toMatchObject({ forfeited: true, forfeitedBy: 'p1', winner: 'p2' });
+  });
+
+  it('leaves forfeitedBy empty when nobody forfeited', () => {
+    const result = buildGameRecord(playedReplay());
+    expect(result.ok && result.record.forfeitedBy).toBeNull();
+  });
+
+  it('flags the forfeit but not the slot when the name matches no player', () => {
+    const result = buildGameRecord(strangerForfeitReplay());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record).toMatchObject({ forfeited: true, forfeitedBy: null });
+  });
+
+  it('does not count a disconnect and reconnect as a forfeit', () => {
+    const result = buildGameRecord(reconnectReplay());
+    expect(result.ok && result.record.forfeited).toBe(false);
   });
 });
 

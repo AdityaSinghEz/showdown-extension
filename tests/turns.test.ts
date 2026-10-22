@@ -93,6 +93,50 @@ describe('turn recording', () => {
     expect(end3?.p2.active?.species).toBe('Kingambit');
   });
 
+  it('tracks team HP including benched and unrevealed Pokemon', () => {
+    const state = track(SAMPLE_BATTLE);
+    // Turn 1: Zoroark at 150/310, Hydrapple at 65%, the other five are unrevealed.
+    expect(state.turns[1]?.endState?.p1.teamHp).toBeCloseTo(150 / 310 + 5);
+    expect(state.turns[1]?.endState?.p2.teamHp).toBeCloseTo(0.65 + 5);
+    // Turn 2: Zoroark keeps its HP on the bench and Gengar joins at full health.
+    expect(state.turns[2]?.endState?.p1.teamHp).toBeCloseTo(150 / 310 + 1 + 4);
+    // Turn 3: Hydrapple fainted (0), Kingambit arrived at full health.
+    expect(state.turns[3]?.endState?.p2.teamHp).toBeCloseTo(0 + 1 + 4);
+    // Turn 4: Kingambit dropped to 40%.
+    expect(state.turns[4]?.endState?.p2.teamHp).toBeCloseTo(0 + 0.4 + 4);
+  });
+
+  it('reports no team HP when the team size is unknown', () => {
+    const state = track(message('|switch|p1a: Zoroark|Zoroark, L82, M|100/100', '|turn|1'));
+    expect(state.turns[0]?.endState?.p1.teamHp).toBeNull();
+  });
+
+  it('remembers that Tera was used, even after the Pokemon leaves', () => {
+    const state = track(SAMPLE_BATTLE);
+    expect(state.turns[1]?.endState?.p2.teraUsed).toBe(false);
+    expect(state.turns[2]?.endState?.p2.teraUsed).toBe(true);
+    expect(state.turns[3]?.endState?.p2.teraUsed).toBe(true);
+    expect(state.turns[3]?.endState?.p1.teraUsed).toBe(false);
+  });
+
+  it('moves a Pokemon HP entry when an Illusion is revealed', () => {
+    const state = track(
+      message(
+        '|teamsize|p1|6',
+        '|teamsize|p2|6',
+        '|switch|p1a: Gengar|Gengar, L85, M|100/100',
+        '|switch|p2a: Kingambit|Kingambit, L80, M|100/100',
+        '|turn|1',
+        '|move|p1a: Gengar|Shadow Ball|p2a: Kingambit',
+        '|-damage|p2a: Kingambit|70/100',
+        '|replace|p2a: Zoroark|Zoroark, L82, M',
+        '|turn|2',
+      ),
+    );
+    expect(state.turns[1]?.endState?.p2.teamHp).toBeCloseTo(0.7 + 5);
+    expect(Object.keys(state.sides.p2.roster)).toEqual(['Zoroark']);
+  });
+
   it('closes the final turn when the battle ends', () => {
     const last = track(SAMPLE_BATTLE).turns[4];
     expect(last?.endState?.p2.active?.hp).toBe(0.4);

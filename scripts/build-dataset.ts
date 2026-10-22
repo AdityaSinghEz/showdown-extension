@@ -56,6 +56,12 @@ async function main(): Promise<void> {
     console.log(`  skipped (${reason}): ${ids.length}  [${shown}${more}]`);
   }
   console.log(`Average turns: ${summary.averageTurns.toFixed(1)}  Forfeits: ${summary.forfeits}`);
+  const forfeiterWon = records.filter((r) => r.forfeitedBy !== null && r.forfeitedBy === r.winner).length;
+  const unattributed = records.filter((r) => r.forfeited && r.forfeitedBy === null).length;
+  console.log(
+    `Forfeit check: the forfeiting player also won in ${forfeiterWon} games (should be 0); ` +
+      `${unattributed} forfeits named nobody in the game`,
+  );
   console.log(`p1 win rate: ${(summary.p1WinRate * 100).toFixed(1)}%`);
   console.log(`Higher-rated player won: ${(summary.higherRatedWinRate * 100).toFixed(1)}%`);
   console.log('Games per rating band:');

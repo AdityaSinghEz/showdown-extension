@@ -15,7 +15,7 @@ export default defineContentScript({
 
   main() {
     const tracker = new BattleTracker();
-    console.info('[ps-review] listener ready (v0.2.0, turn recording on)');
+    console.info('[ps-review] listener ready (v0.3.0, turn recording and team HP on)');
 
     tracker.onBattleEnd((state) => {
       console.info('[ps-review] battle ended', state);

@@ -112,6 +112,8 @@ export function createSideState(): SideState {
     active: null,
     pendingReplacement: false,
     pendingTera: null,
+    roster: {},
+    teraUsed: false,
   };
 }
 
@@ -124,10 +126,23 @@ function currentTurn(state: BattleState): TurnRecord {
   return turn;
 }
 
+/**
+ * Sums team HP as fractions: revealed Pokemon at their last known HP, and
+ * every unrevealed Pokemon at full health.
+ */
+function teamHp(side: SideState): number | null {
+  if (side.teamSize === null) return null;
+  const revealed = Object.values(side.roster);
+  const known = revealed.reduce((sum, hp) => sum + hp, 0);
+  return known + Math.max(0, side.teamSize - revealed.length);
+}
+
 function snapshot(side: SideState): SideSnapshot {
   return {
     active: side.active ? { ...side.active } : null,
     remaining: side.teamSize === null ? null : side.teamSize - side.fainted,
+    teamHp: teamHp(side),
+    teraUsed: side.teraUsed,
   };
 }
 
@@ -150,10 +165,12 @@ function speciesOf(state: BattleState, id: PokemonId): string {
 }
 
 function applyHp(state: BattleState, id: PokemonId, hp: ReturnType<typeof parseHp>): void {
-  const active = state.sides[id.side].active;
+  const side = state.sides[id.side];
+  const active = side.active;
   if (!active || !hp) return;
   active.hp = hp.fraction;
   active.status = hp.status;
+  if (hp.fraction !== null) side.roster[active.nickname] = hp.fraction;
 }
 
 /**
@@ -206,6 +223,8 @@ export function recordEvent(state: BattleState, event: ProtocolEvent): void {
         status: hp?.status ?? null,
         tera: null,
       };
+      // A Pokemon returning from the bench keeps its HP unless the event says otherwise.
+      side.roster[id.name] = hp?.fraction ?? side.roster[id.name] ?? 1;
 
       turn.actions.push({
         kind,
@@ -229,7 +248,16 @@ export function recordEvent(state: BattleState, event: ProtocolEvent): void {
       const species = speciesFromDetails(event.args[1]);
       if (active && species) {
         active.species = species;
-        if (event.command === 'replace') active.nickname = id.name;
+        if (event.command === 'replace') {
+          // An Illusion reveal renames the Pokemon; carry its HP entry across.
+          const side = state.sides[id.side];
+          const previousName = active.nickname;
+          if (previousName !== id.name && previousName in side.roster) {
+            side.roster[id.name] = side.roster[previousName] ?? 1;
+            delete side.roster[previousName];
+          }
+          active.nickname = id.name;
+        }
       }
       break;
     }
@@ -266,6 +294,7 @@ export function recordEvent(state: BattleState, event: ProtocolEvent): void {
       const type = event.args[1] ?? null;
       const side = state.sides[id.side];
       side.pendingTera = type;
+      side.teraUsed = true;
       if (side.active) side.active.tera = type;
       break;
     }
@@ -317,7 +346,10 @@ export function recordEvent(state: BattleState, event: ProtocolEvent): void {
       turn.faints.push({ side: id.side, pokemon: speciesOf(state, id) });
       side.fainted += 1;
       side.pendingReplacement = true;
-      if (side.active) side.active.hp = 0;
+      if (side.active) {
+        side.active.hp = 0;
+        side.roster[side.active.nickname] = 0;
+      }
       break;
     }
 
