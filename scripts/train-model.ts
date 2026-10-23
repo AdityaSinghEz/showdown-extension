@@ -131,6 +131,46 @@ function showGame(model: LogisticModel, records: readonly GameRecord[], query: s
   });
 }
 
+/** Adds the swapped-sides twin of every prediction (probability flipped, label flipped). */
+function mirror(predictions: readonly Prediction[]): Prediction[] {
+  return predictions.flatMap((p) => [
+    p,
+    { probability: 1 - p.probability, label: (1 - p.label) as 0 | 1 },
+  ]);
+}
+
+function printCalibration(name: string, predictions: readonly Prediction[]): void {
+  console.log(`\nCalibration, ${name} (predicted should match actual):`);
+  for (const bin of calibration(predictions)) {
+    console.log(
+      `  ${pct(bin.lower, 0).padStart(4)}-${pct(bin.upper, 0).padEnd(4)} n=${String(bin.count).padStart(5)}  ` +
+        `predicted ${pct(bin.meanPredicted)}  actual ${pct(bin.observedRate)}`,
+    );
+  }
+}
+
+/**
+ * Refits the model with features removed and reports the test log loss, to show
+ * which features earn their place. Lower is better; a feature whose removal
+ * leaves the score unchanged or better adds nothing.
+ */
+function printFeatureAblation(train: readonly TurnSample[], test: readonly TurnSample[], l2: number): void {
+  const fit = (keep: readonly number[]): number => {
+    const names = keep.map((i) => FEATURE_NAMES[i] ?? '');
+    const subset = (rows: readonly TurnSample[]) =>
+      rows.map((s) => ({ features: keep.map((i) => s.features[i] ?? 0), label: s.label }));
+    const model = trainLogistic(names, subset(train), { l2 });
+    return logLoss(subset(test).map((r) => ({ probability: predictProbability(model, r.features), label: r.label })));
+  };
+  const all = FEATURE_NAMES.map((_, i) => i);
+  console.log('\nFeature check (test log loss; lower is better):');
+  console.log(`  all features              ${fit(all).toFixed(4)}`);
+  FEATURE_NAMES.forEach((name, i) => {
+    console.log(`  without ${name.padEnd(17)} ${fit(all.filter((j) => j !== i)).toFixed(4)}`);
+  });
+  console.log(`  teamHp only               ${fit([FEATURE_NAMES.indexOf('teamHp')]).toFixed(4)}`);
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -170,6 +210,8 @@ async function main(): Promise<void> {
   let trainGames = 0;
   let testGames = 0;
   let excludedForfeits = 0;
+  let trainP1Wins = 0;
+  let testP1Wins = 0;
   for (const record of records) {
     if (record.forfeited && !includeForfeits) excludedForfeits += 1;
     const samples = extractSamples(record, { includeForfeits });
@@ -177,9 +219,11 @@ async function main(): Promise<void> {
     if (isTestGame(record.id, testPercent)) {
       test.push(...samples);
       testGames += 1;
+      if (record.winner === 'p1') testP1Wins += 1;
     } else {
       train.push(...samples);
       trainGames += 1;
+      if (record.winner === 'p1') trainP1Wins += 1;
     }
   }
   console.log(
@@ -207,6 +251,11 @@ async function main(): Promise<void> {
     `guessing 50% every time: log loss ${BASELINE_LOG_LOSS.toFixed(3)} | Brier ${BASELINE_BRIER.toFixed(3)} | accuracy 50.0%`,
   );
 
+  console.log(
+    `\nPlayer 1 won ${pct(trainP1Wins / Math.max(trainGames, 1))} of train games and ` +
+      `${pct(testP1Wins / Math.max(testGames, 1))} of test games (a large gap from 50% in the test split skews the plain calibration table).`,
+  );
+
   console.log('\nWeights (positive = being ahead on that feature raises your win chance):');
   FEATURE_NAMES.forEach((name, i) => {
     const weight = model.weights[i] ?? 0;
@@ -215,14 +264,13 @@ async function main(): Promise<void> {
     );
   });
 
-  const calibrationSet = test.length >= 100 ? test : train;
-  console.log(`\nCalibration on the ${calibrationSet === test ? 'test' : 'training'} set (predicted should match actual):`);
-  for (const bin of calibration(predictAll(model, calibrationSet))) {
-    console.log(
-      `  ${pct(bin.lower, 0).padStart(4)}-${pct(bin.upper, 0).padEnd(4)} n=${String(bin.count).padStart(5)}  ` +
-        `predicted ${pct(bin.meanPredicted)}  actual ${pct(bin.observedRate)}`,
-    );
+  printCalibration('train', predictAll(model, train));
+  if (test.length > 0) {
+    printCalibration('test', predictAll(model, test));
+    printCalibration('test, mirrored (each position also seen from the other side; removes any player 1 skew)', mirror(predictAll(model, test)));
   }
+
+  if (test.length > 0) printFeatureAblation(train, test, l2);
 
   const outPath = values.out ?? 'data/model.json';
   await mkdir(dirname(outPath), { recursive: true });
