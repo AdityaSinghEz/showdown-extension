@@ -34,6 +34,12 @@ export interface ReplayJson {
   players: [string, string];
   /** The battle log as newline-separated protocol lines. */
   log: string;
+  /**
+   * The battle's input log: the random seed plus every choice both players
+   * made, one `>` line each. Replaying it in the simulator reproduces the game.
+   * Absent on replays that were saved before this field was kept.
+   */
+  inputlog?: string;
   uploadtime: number;
   rating: number | null;
   private: number;
@@ -91,6 +97,7 @@ export function parseReplayJson(value: unknown): ReplayJson | null {
     formatid: typeof raw.formatid === 'string' ? raw.formatid : entry.id.replace(/-\d.*$/, ''),
     players: entry.players,
     log: raw.log,
+    ...(typeof raw.inputlog === 'string' ? { inputlog: raw.inputlog } : {}),
     uploadtime: entry.uploadtime,
     rating: entry.rating,
     private: entry.private,

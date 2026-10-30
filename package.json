@@ -13,9 +13,12 @@
     "postinstall": "wxt prepare",
     "replays:download": "tsx scripts/download-replays.ts",
     "dataset:build": "tsx scripts/build-dataset.ts",
-    "model:train": "tsx scripts/train-model.ts"
+    "model:train": "tsx scripts/train-model.ts",
+    "sim:verify": "tsx scripts/verify-sim.ts"
   },
   "devDependencies": {
+    "@pkmn/randoms": "^0.10.11",
+    "@pkmn/sim": "^0.10.11",
     "@types/node": "^26.6.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

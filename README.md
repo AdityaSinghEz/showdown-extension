@@ -28,6 +28,8 @@ npm run replays:download -- --limit 200 --min-rating 1700 --max-rating 1900
 npm run dataset:build
 ```
 
+Replays saved by earlier versions lack the input log that `sim:verify` needs. Run `npm run replays:download -- --backfill` once to re-download those files.
+
 Downloads go to `data/raw/<id>.json` (existing files are skipped, so runs can be repeated to top up) and records to `data/games.jsonl`. The `data/` folder is git-ignored.
 
 Games are excluded when a player has no rating, the game has no result or ends in a tie, or it ends in a forfeit before turn 5. The summary reports how many were skipped for each reason, the games per rating band, and sanity checks such as how often the higher-rated player won.
@@ -62,6 +64,16 @@ Choices and caveats:
 - Positions where one side has no Pokemon left are skipped, since the result is already known.
 - Positions from one game are strongly correlated, so the number of games matters more than the number of positions. With a few hundred games, treat small score differences as noise.
 - The model sees only what a spectator log shows. It does not know movesets, items or unrevealed Pokemon, so it cannot judge a play that depends on them.
+
+## Re-simulating replays
+
+```bash
+npm run sim:verify                     # check the 20 newest downloaded replays
+npm run sim:verify -- --limit 100
+npm run sim:verify -- --id gen9randombattle-2701782369
+```
+
+Each replay stores an `inputlog` with the random seed and every choice. Random Battles teams come from that seed, so feeding the log into the [@pkmn/sim](https://www.npmjs.com/package/@pkmn/sim) simulator can reproduce the whole game with both full teams. The check reports how many replays reproduce exactly and where the others first differ. A difference usually means the installed simulator is a different version from the one that played the game. `--sim <folder>` checks against a built copy of the Showdown repository instead, and the report lists how many games reproduced for each game version.
 
 ## Architecture
 
@@ -98,7 +110,7 @@ lib/protocol/parser.ts  ->  lib/battle/state.ts (BattleTracker)
 | `lib/model/evaluate.ts` | Log loss, Brier score, accuracy and calibration |
 | `lib/model/split.ts` | Stable train/test split by game id |
 | `lib/model/curve.ts` | Per-turn win-probability curve for a game |
-| `scripts/` | Command-line tools for downloading replays and building the dataset |
+| `scripts/` | Command-line tools for downloading replays, building the dataset, training the model and re-simulating replays |
 | `entrypoints/` | Thin WXT wiring only; no business logic |
 
 `lib/` has no browser dependencies and is fully unit-tested.

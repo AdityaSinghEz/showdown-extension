@@ -28,6 +28,25 @@ function clientWith(fetchImpl: FetchLike, sleep = vi.fn(async () => {})) {
   return { client: new ReplayClient({ fetch: fetchImpl, sleep, delayMs: 10, backoffMs: 100, maxRetries: 2 }), sleep };
 }
 
+describe('parseReplayJson input log', () => {
+  const body = {
+    id: 'gen9randombattle-1',
+    format: '[Gen 9] Random Battle',
+    players: ['A', 'B'],
+    uploadtime: 1,
+    log: '|player|p1|A',
+  };
+
+  it('keeps the input log when the service provides one', () => {
+    expect(parseReplayJson({ ...body, inputlog: '>start {}' })?.inputlog).toBe('>start {}');
+  });
+
+  it('leaves it absent when missing or not a string', () => {
+    expect(parseReplayJson(body)).not.toHaveProperty('inputlog');
+    expect(parseReplayJson({ ...body, inputlog: 5 })).not.toHaveProperty('inputlog');
+  });
+});
+
 describe('ReplayClient', () => {
   it('builds the search URL and sends a User-Agent', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => reply(200, []));

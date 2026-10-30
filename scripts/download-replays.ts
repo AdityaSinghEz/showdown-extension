@@ -10,9 +10,16 @@
  *
  * Files are written to `<out>/raw/<replay id>.json`. Replays already on disk
  * are skipped, so the command can be re-run to top up the collection.
+ *
+ * ```
+ * npm run replays:download -- --backfill
+ * ```
+ *
+ * Re-downloads saved replays that lack an input log (files saved by earlier
+ * versions of this script did not keep it), so they can be re-simulated.
  */
 
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ReplayClient } from '../lib/replay/client';
@@ -38,6 +45,43 @@ async function existingIds(dir: string): Promise<Set<string>> {
   }
 }
 
+/** True when a saved replay file already holds its input log. */
+async function hasInputLog(path: string): Promise<boolean> {
+  try {
+    const saved = JSON.parse(await readFile(path, 'utf8')) as { inputlog?: unknown };
+    return typeof saved.inputlog === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/** Re-downloads every saved replay that has no input log. */
+async function backfill(client: ReplayClient, rawDir: string): Promise<void> {
+  const ids = [...(await existingIds(rawDir))].sort();
+  const missing: string[] = [];
+  for (const id of ids) {
+    if (!(await hasInputLog(join(rawDir, `${id}.json`)))) missing.push(id);
+  }
+  console.log(`${ids.length} replays on disk, ${missing.length} without an input log`);
+
+  let updated = 0;
+  let failed = 0;
+  for (const id of missing) {
+    try {
+      const replay = await client.getReplay(id);
+      if (replay.inputlog === undefined) throw new Error('the replay service returned no input log');
+      await writeFile(join(rawDir, `${id}.json`), JSON.stringify(replay));
+      updated += 1;
+      console.log(`[${updated + failed}/${missing.length}] updated ${id}`);
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[${updated + failed}/${missing.length}] FAILED ${id}: ${message}`);
+    }
+  }
+  console.log(`Done. Updated ${updated}, failed ${failed}.`);
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -48,6 +92,7 @@ async function main(): Promise<void> {
       'max-rating': { type: 'string' },
       'delay-ms': { type: 'string', default: '1000' },
       out: { type: 'string', default: 'data' },
+      backfill: { type: 'boolean', default: false },
     },
   });
 
@@ -55,6 +100,10 @@ async function main(): Promise<void> {
   await mkdir(rawDir, { recursive: true });
 
   const client = new ReplayClient({ delayMs: numberOption(values['delay-ms'], 1000) });
+  if (values.backfill === true) {
+    await backfill(client, rawDir);
+    return;
+  }
   const exclude = await existingIds(rawDir);
   console.log(`Already on disk: ${exclude.size}`);
 
