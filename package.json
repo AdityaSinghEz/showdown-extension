@@ -14,7 +14,9 @@
     "replays:download": "tsx scripts/download-replays.ts",
     "dataset:build": "tsx scripts/build-dataset.ts",
     "model:train": "tsx scripts/train-model.ts",
-    "sim:verify": "tsx scripts/verify-sim.ts"
+    "sim:verify": "tsx scripts/verify-sim.ts",
+    "sim:setup": "tsx scripts/setup-sim.ts",
+    "review:game": "tsx scripts/review-game.ts"
   },
   "devDependencies": {
     "@pkmn/randoms": "^0.10.11",

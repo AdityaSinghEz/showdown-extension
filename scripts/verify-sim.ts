@@ -9,12 +9,16 @@
  * npm run sim:verify -- --id gen9randombattle-2701782369
  * npm run sim:verify -- --oldest --limit 10
  * npm run sim:verify -- --sim ../ps-sim
+ * npm run sim:verify -- --sim-root ..
  * ```
  *
  * Every replay stores an `inputlog`: the random seed and each choice both
  * players made. For Random Battles the teams are generated from that seed, so
  * if the installed simulator matches the one that ran the game, feeding the
  * input log back in reproduces the whole game, including both full teams.
+ *
+ * `--sim-root <folder>` picks, for every game, the build named in its input log
+ * from `<folder>/ps-sim-<first 8 characters>` (create these with `npm run sim:setup`).
  *
  * By default the bundled `@pkmn/sim` is used. `--sim <folder>` points at a built
  * copy of the Showdown repository instead, so a game can be checked against the
@@ -32,6 +36,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { TeamGenerators } from '@pkmn/randoms';
+import { simFolderName, versionFromInputLog } from '../lib/replay/version';
 import { BattleStreams, Teams } from '@pkmn/sim';
 
 /** The two simulator entry points this script needs. */
@@ -119,6 +124,7 @@ async function main(): Promise<void> {
       id: { type: 'string' },
       oldest: { type: 'boolean', default: false },
       sim: { type: 'string' },
+      'sim-root': { type: 'string' },
     },
   });
   const dir = values.dir ?? 'data/raw';
@@ -133,7 +139,20 @@ async function main(): Promise<void> {
     return;
   }
 
-  const sim = loadSim(values.sim);
+  const simRoot = values['sim-root'];
+  const sims = new Map<string, SimApi>();
+  /** The simulator for one game: a per-version build under --sim-root, otherwise the single chosen one. */
+  const simFor = (inputlog: string): SimApi => {
+    if (simRoot === undefined) return sims.get('') ?? sims.set('', loadSim(values.sim)).get('')!;
+    const version = versionFromInputLog(inputlog);
+    if (!version) throw new Error('replay input log has no version line');
+    const folder = join(resolve(simRoot), simFolderName(version));
+    const cached = sims.get(folder);
+    if (cached) return cached;
+    const loaded = loadSim(folder);
+    sims.set(folder, loaded);
+    return loaded;
+  };
   const byVersion = new Map<string, { checked: number; matched: number }>();
   let matched = 0;
   let missing = 0;
@@ -145,7 +164,7 @@ async function main(): Promise<void> {
       continue;
     }
     const version = /^>version (\S+)/.exec(replay.inputlog)?.[1]?.slice(0, 8) ?? '?';
-    const simulated = comparableLines(await resimulate(replay.inputlog, sim));
+    const simulated = comparableLines(await resimulate(replay.inputlog, simFor(replay.inputlog)));
     const real = comparableLines(replay.log);
     const diff = firstDifference(real, simulated);
     const stats = byVersion.get(version) ?? { checked: 0, matched: 0 };

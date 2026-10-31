@@ -75,6 +75,19 @@ npm run sim:verify -- --id gen9randombattle-2701782369
 
 Each replay stores an `inputlog` with the random seed and every choice. Random Battles teams come from that seed, so feeding the log into the [@pkmn/sim](https://www.npmjs.com/package/@pkmn/sim) simulator can reproduce the whole game with both full teams. The check reports how many replays reproduce exactly and where the others first differ. A difference usually means the installed simulator is a different version from the one that played the game. `--sim <folder>` checks against a built copy of the Showdown repository instead, and the report lists how many games reproduced for each game version.
 
+Showdown is updated several times a week, and a game can only be reproduced exactly with the build that played it. `npm run sim:setup` reads the build named in each saved replay and fetches and builds every missing one into a `ps-sim-<8 characters>` folder next to the project (it needs `git`, `node` and network access to GitHub). Then `npm run sim:verify -- --limit 1000 --sim-root ..` checks every game against its own build.
+
+## Reviewing a game
+
+```bash
+npm run review:game -- --id gen9randombattle-2701773375
+npm run review:game -- --id gen9randombattle-2701773375 --turns 3-8 --samples 4
+```
+
+For each turn the review engine restores the exact simulator position, tries every legal choice for both players (moves, moves with Terastallization, switches), plays the turn forward with several random seeds, and scores the resulting positions with the win-probability model. The scores form a payoff matrix, which is solved as a simultaneous-move game. A player's choice is graded by how much win probability it gave up against best play: best, good, inaccuracy, mistake or blunder (thresholds in `lib/review/grade.ts`, a first guess). The opponent's actual move is not used, so each decision is judged without hindsight.
+
+Needs the replay input logs (`npm run replays:download -- --backfill`), the model (`npm run model:train`) and the matching Showdown builds (`npm run sim:setup`). The grades are only as good as the position scorer, which currently looks at team HP, status and Terastallization only, and each option is evaluated one turn ahead.
+
 ## Architecture
 
 ```
@@ -110,6 +123,7 @@ lib/protocol/parser.ts  ->  lib/battle/state.ts (BattleTracker)
 | `lib/model/evaluate.ts` | Log loss, Brier score, accuracy and calibration |
 | `lib/model/split.ts` | Stable train/test split by game id |
 | `lib/model/curve.ts` | Per-turn win-probability curve for a game |
+| `lib/review/` | Review engine: legal choices, matrix-game solver, position scoring and grades |
 | `scripts/` | Command-line tools for downloading replays, building the dataset, training the model and re-simulating replays |
 | `entrypoints/` | Thin WXT wiring only; no business logic |
 
