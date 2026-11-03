@@ -55,11 +55,24 @@ async function main(): Promise<void> {
       model: { type: 'string', default: 'data/model.json' },
       'sim-root': { type: 'string', default: '..' },
       samples: { type: 'string', default: '4' },
+      rollouts: { type: 'string', default: '0' },
+      depth: { type: 'string', default: '6' },
+      'rollout-weight': { type: 'string', default: '1' },
+      'max-options': { type: 'string', default: '0' },
       turns: { type: 'string' },
       'no-tera': { type: 'boolean', default: false },
     },
   });
   if (values.id === undefined) throw new Error('Give a game with --id, for example --id gen9randombattle-2701773375');
+  const rollouts = Number(values.rollouts);
+  const depth = Number(values.depth);
+  if (!Number.isInteger(rollouts) || rollouts < 0) throw new Error('--rollouts must be a whole number, 0 or more');
+  if (!Number.isInteger(depth) || depth < 1) throw new Error('--depth must be a whole number of 1 or more');
+  const weight = Number(values['rollout-weight']);
+  if (!(weight >= 0 && weight <= 1)) throw new Error('--rollout-weight must be between 0 and 1');
+  const rollout = rollouts > 0 ? { rollouts, depth, weight } : undefined;
+  const maxOptions = Number(values['max-options']);
+  if (!Number.isInteger(maxOptions) || maxOptions < 0) throw new Error('--max-options must be a whole number, 0 or more');
   const samples = Number(values.samples);
   if (!Number.isInteger(samples) || samples < 1) throw new Error('--samples must be a whole number of 1 or more');
   const [fromTurn, toTurn] = parseRange(values.turns);
@@ -84,7 +97,7 @@ async function main(): Promise<void> {
   const reviews: TurnReview[] = [];
   for (const start of starts) {
     const began = Date.now();
-    const review = reviewTurn(sim, model, start, { samples, includeTera: values['no-tera'] !== true });
+    const review = reviewTurn(sim, model, start, { samples, includeTera: values['no-tera'] !== true, rollout, maxOptions: maxOptions > 0 ? maxOptions : undefined });
     if (review === null) {
       console.log(`Turn ${String(start.turn).padStart(2)}: skipped (a side was not making a normal choice)`);
       continue;

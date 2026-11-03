@@ -27,6 +27,8 @@ import type { LogisticModel } from '../model/logistic';
 import { gradeLoss, type Grade } from './grade';
 import { columnPayoffs, rowPayoffs, solveMatrixGame } from './matrix';
 import { winProbability } from './position';
+import { scoreOptions } from './policy';
+import { rolloutValue, type RolloutOptions } from './rollout';
 import type { SimBattle, SimModule, SimRequest, SimSide } from './sim';
 
 /** One choice a side could make. */
@@ -220,6 +222,17 @@ export interface ReviewOptions {
   samples: number;
   /** Whether Terastallize variants of each move are tried. */
   includeTera: boolean;
+  /**
+   * When set, each branch is judged by playing it forward (see `rollout.ts`)
+   * instead of by the model alone. `samples` then counts branches, each
+   * followed by `rollouts` forward games.
+   */
+  rollout?: Omit<RolloutOptions, 'seed'>;
+  /**
+   * Most options per side that are simulated; the rest are ignored, except the
+   * one actually played. Keeps a review fast. Omit to try every legal option.
+   */
+  maxOptions?: number;
 }
 
 function restore(sim: SimModule, state: string): SimBattle {
@@ -231,6 +244,26 @@ function bestShares(options: readonly ChoiceOption[], mix: readonly number[]): {
     .map((option, i) => ({ option, share: mix[i] ?? 0 }))
     .filter((entry) => entry.share >= 0.05)
     .sort((a, b) => b.share - a.share);
+}
+
+/**
+ * Keeps the most promising options (by the practice player's scores) plus the
+ * one that was played, so grading never loses the player's real choice.
+ */
+function prune(
+  battle: SimBattle,
+  sideIndex: 0 | 1,
+  list: ChoiceOption[],
+  playedLine: string | null,
+  limit: number | undefined,
+): ChoiceOption[] {
+  if (limit === undefined || list.length <= limit) return list;
+  const scores = scoreOptions(battle, sideIndex, list);
+  const ranked = list.map((option, i) => ({ option, score: scores[i] as number })).sort((a, b) => b.score - a.score);
+  const kept = new Set(ranked.slice(0, limit).map((entry) => entry.option));
+  const playedIndex = playedLine === null ? -1 : matchChoice(playedLine, list);
+  if (playedIndex >= 0) kept.add(list[playedIndex] as ChoiceOption);
+  return list.filter((option) => kept.has(option));
 }
 
 /**
@@ -250,8 +283,8 @@ export function reviewTurn(
 ): TurnReview | null {
   const probe = restore(sim, start.state);
   const [side1, side2] = probe.sides as [SimSide, SimSide];
-  const rows = legalOptions(side1.activeRequest, options.includeTera);
-  const columns = legalOptions(side2.activeRequest, options.includeTera);
+  const rows = prune(probe, 0, legalOptions(side1.activeRequest, options.includeTera), start.played.p1, options.maxOptions);
+  const columns = prune(probe, 1, legalOptions(side2.activeRequest, options.includeTera), start.played.p2, options.maxOptions);
   if (rows.length === 0 || columns.length === 0) return null;
 
   let failures = 0;
@@ -265,7 +298,9 @@ export function reviewTurn(
           battle.prng = new sim.PRNG([k + 1, 17, 29, 41]);
           battle.choose('p1', row.choice);
           battle.choose('p2', column.choice);
-          total += winProbability(battle, model);
+          total += options.rollout
+            ? rolloutValue(sim, battle, model, { ...options.rollout, seed: 100 * (k + 1) })
+            : winProbability(battle, model);
           done += 1;
         } catch {
           // A branch the simulator rejects is skipped rather than guessed at.

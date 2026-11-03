@@ -174,3 +174,18 @@ All processing happens locally in the browser. The extension requests no permiss
 - Rejoining a battle room makes the server replay its log; the tracker resets that room's state on `|init|` so turns are not recorded twice.
 - Team HP assumes every unrevealed Pokemon is at full health and that the team size is the one the server announces. Revival Blessing is not handled: a revived Pokemon stays counted as fainted.
 - The rating-update parser targets the `|raw|` end-of-battle line format and should be re-verified against live battles.
+
+## Rollout evaluation
+
+The win-probability model only sees a snapshot, so it misjudges positions that depend on what happens next, such as a boosted sweeper or a setup move. A rollout plays the position forward a few turns with the practice player and averages how those games end.
+
+```powershell
+npm run review:game -- --id gen9randombattle-2701773375 --model data/model-rich.json --rollouts 6 --depth 6 --max-options 5 --samples 1
+```
+
+- `--rollouts` is the number of forward games per option pair (0 turns rollouts off).
+- `--depth` is how many turns each forward game runs before the model reads the position.
+- `--max-options` simulates only the most promising options per side, plus the one played, which keeps a review to about two seconds a turn.
+- `--rollout-weight` mixes rollouts with the model reading (1 is rollouts only, 0 is model only).
+
+To check whether rollouts really predict winners better, run `npm run eval:rollout -- --model data/model-rich.json --games 40`. It scores both on held-out human games.
