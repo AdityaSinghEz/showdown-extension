@@ -18,6 +18,12 @@ export interface SimPokemon {
   terastallized?: string | false;
   speciesName?: string;
   name?: string;
+  boosts?: Record<string, number>;
+  /** Base stats of the species. */
+  species?: { baseStats: Record<string, number> };
+  moveSlots?: { id: string }[];
+  getTypes?(): string[];
+  getStat?(stat: string, unboosted?: boolean, unmodified?: boolean): number;
 }
 
 /** One side of a simulated battle. */
@@ -26,6 +32,25 @@ export interface SimSide {
   active: (SimPokemon | undefined)[];
   /** The pending choice request, or null/undefined when none is waiting. */
   activeRequest?: SimRequest | null;
+  /** Hazards and screens on this side, keyed by condition id. */
+  sideConditions?: Record<string, { layers?: number } | undefined>;
+  name?: string;
+}
+
+/** Move data from the simulator's dex. */
+export interface SimMoveData {
+  basePower: number;
+  type: string;
+  category: string;
+  accuracy: number | true;
+  /** Fraction of max HP healed, as [numerator, denominator]. */
+  heal?: [number, number];
+  /** Stat changes the move causes. */
+  boosts?: Record<string, number>;
+  /** Who the move targets, for example `self` or `normal`. */
+  target?: string;
+  /** Entry hazard or screen the move sets up. */
+  sideCondition?: string;
 }
 
 /** A pending request for one side's choice. */
@@ -47,13 +72,22 @@ export interface SimBattle {
   ended: boolean;
   sides: SimSide[];
   prng: unknown;
+  winner?: string;
+  dex?: {
+    moves: { get(id: string): SimMoveData };
+    getEffectiveness(source: string, target: string[]): number;
+    getImmunity(source: string, target: string[]): boolean;
+  };
   choose(side: 'p1' | 'p2', choice: string): boolean;
   toJSON(): unknown;
 }
 
 /** The parts of the simulator module this project uses. */
 export interface SimModule {
-  Battle: { fromJSON(serialized: unknown): SimBattle };
+  Battle: {
+    new (options: { formatid: string; seed: number[]; p1: { name: string }; p2: { name: string } }): SimBattle;
+    fromJSON(serialized: unknown): SimBattle;
+  };
   PRNG: new (seed: number[]) => unknown;
   BattleStream: new () => { battle: SimBattle | null };
   getPlayerStreams(stream: never): {

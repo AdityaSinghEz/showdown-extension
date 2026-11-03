@@ -152,6 +152,16 @@ export function matchChoice(line: string, options: readonly ChoiceOption[]): num
   });
 }
 
+/** Optional behavior while replaying a game. */
+export interface TurnHooks {
+  /** Called with the live battle at the start of every turn. */
+  onTurnStart?: (battle: SimBattle) => void;
+  /** Set to false to skip saving the state text, which saves memory when only the hook is needed. */
+  keepState?: boolean;
+  /** Called once when the replay finishes, with the final battle. */
+  onEnd?: (battle: SimBattle) => void;
+}
+
 /**
  * Replays an input log and saves the state at the start of every turn.
  *
@@ -159,7 +169,11 @@ export function matchChoice(line: string, options: readonly ChoiceOption[]): num
  * @param inputlog - The replay's input log.
  * @returns One entry per turn, with the choices the players made on it.
  */
-export async function collectTurnStarts(sim: SimModule, inputlog: string): Promise<TurnStart[]> {
+export async function collectTurnStarts(
+  sim: SimModule,
+  inputlog: string,
+  hooks: TurnHooks = {},
+): Promise<TurnStart[]> {
   const lines = inputlog.split('\n').filter((line) => line !== '' && !line.startsWith('>version'));
   const stream = new sim.BattleStream();
   const streams = sim.getPlayerStreams(stream as never);
@@ -174,14 +188,17 @@ export async function collectTurnStarts(sim: SimModule, inputlog: string): Promi
     const battle = stream.battle;
     if (battle && !battle.ended && battle.turn !== lastTurn && battle.turn > 0) {
       lastTurn = battle.turn;
+      hooks.onTurnStart?.(battle);
       starts.push({
         turn: battle.turn,
-        state: JSON.stringify(battle.toJSON()),
+        state: hooks.keepState === false ? '' : JSON.stringify(battle.toJSON()),
         played: { p1: null, p2: null },
         startLine: i + 1,
       });
     }
   }
+
+  if (stream.battle) hooks.onEnd?.(stream.battle);
 
   // The first move or switch each side chose after a turn began is that turn's decision.
   // Later lines before the next turn are forced replacements after a faint.

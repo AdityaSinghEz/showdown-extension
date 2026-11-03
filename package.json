@@ -16,7 +16,10 @@
     "model:train": "tsx scripts/train-model.ts",
     "sim:verify": "tsx scripts/verify-sim.ts",
     "sim:setup": "tsx scripts/setup-sim.ts",
-    "review:game": "tsx scripts/review-game.ts"
+    "review:game": "tsx scripts/review-game.ts",
+    "states:build": "tsx scripts/build-states.ts",
+    "selfplay": "tsx scripts/self-play.ts",
+    "model:train-rich": "tsx scripts/train-rich.ts"
   },
   "devDependencies": {
     "@pkmn/randoms": "^0.10.11",

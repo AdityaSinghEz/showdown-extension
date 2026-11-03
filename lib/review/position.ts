@@ -5,6 +5,7 @@
 import type { ActivePokemon, SideSnapshot } from '../battle/types';
 import { snapshotFeatures } from '../model/features';
 import { predictProbability, type LogisticModel } from '../model/logistic';
+import { richFeatures, RICH_FEATURE_NAMES } from './features';
 import type { SimBattle, SimSide } from './sim';
 
 function fraction(hp: number, maxhp: number): number {
@@ -46,6 +47,16 @@ export function sideSnapshot(side: SimSide): SideSnapshot {
  * @param model - The fitted win-probability model.
  */
 export function winProbability(battle: SimBattle, model: LogisticModel): number {
+  // A model may use any subset of the simulator features, picked by name.
+  const columns = model.featureNames.map((name) => (RICH_FEATURE_NAMES as readonly string[]).indexOf(name));
+  if (columns.every((column) => column >= 0)) {
+    const rich = richFeatures(battle);
+    if (rich === null) {
+      const alive = battle.sides.map((side) => side.pokemon.filter((p) => !p.fainted && p.hp > 0).length);
+      return alive[0] === 0 && alive[1] === 0 ? 0.5 : alive[0] === 0 ? 0 : 1;
+    }
+    return predictProbability(model, columns.map((column) => rich[column] as number));
+  }
   const p1 = sideSnapshot(battle.sides[0] as SimSide);
   const p2 = sideSnapshot(battle.sides[1] as SimSide);
   if ((p1.remaining ?? 0) <= 0 && (p2.remaining ?? 0) <= 0) return 0.5;
