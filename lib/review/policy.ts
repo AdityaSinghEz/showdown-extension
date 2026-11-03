@@ -68,6 +68,48 @@ function benchOptions(request: SimRequest): ChoiceOption[] {
 }
 
 /**
+ * Rough quality score for each legal option, higher is better.
+ *
+ * The practice player samples from these scores, and the review uses them to
+ * decide which options are worth simulating.
+ *
+ * @param random - Adds the practice player's random Tera appetite; omit for a fixed ranking.
+ */
+export function scoreOptions(
+  battle: SimBattle,
+  sideIndex: 0 | 1,
+  legal: readonly ChoiceOption[],
+  random: Random | null = null,
+): number[] {
+  const side = battle.sides[sideIndex] as SimSide;
+  const foe = battle.sides[1 - sideIndex] as SimSide;
+  const foeActive = foe.active[0] && !foe.active[0].fainted ? foe.active[0] : null;
+  const mine = side.active[0];
+  const currentMatchup = mine ? matchup(battle, mine, foeActive) : 0;
+  const lowHp = mine ? hpFraction(mine) < 0.5 : false;
+  return legal.map((option) => {
+    if (option.kind === 'switch') {
+      const target = side.pokemon[option.slot - 1] as SimPokemon;
+      return matchup(battle, target, foeActive) - currentMatchup - 0.4;
+    }
+    const move = battle.dex?.moves.get(option.id);
+    if (!move || !mine) return 0;
+    let score = 0;
+    if (move.category !== 'Status') {
+      score = offense(battle, { ...mine, moveSlots: [{ id: option.id }] } as SimPokemon, foeActive);
+    } else {
+      score = 0.25;
+      if (move.heal) score += lowHp ? 1.2 : -0.2;
+      if (move.boosts && move.target === 'self') score += hpFraction(mine) > 0.7 && battle.turn < 12 ? 0.6 : -0.1;
+      if (move.sideCondition) score += battle.turn < 8 ? 0.5 : 0;
+    }
+    // Terastallizing is allowed but only favoured for a strong attack.
+    if (option.tera) score = score * 1.1 - 0.3 + (random !== null && random() < 0.3 ? 0.5 : 0);
+    return score;
+  });
+}
+
+/**
  * Picks a choice for one side.
  *
  * @param battle - The battle in progress.
@@ -103,27 +145,6 @@ export function chooseAction(
   if (legal.length === 0) return null;
   if (random() < options.epsilon) return (legal[Math.floor(random() * legal.length)] as ChoiceOption).choice;
 
-  const currentMatchup = mine ? matchup(battle, mine, foeActive) : 0;
-  const lowHp = mine ? hpFraction(mine) < 0.5 : false;
-  const scores = legal.map((option) => {
-    if (option.kind === 'switch') {
-      const target = side.pokemon[option.slot - 1] as SimPokemon;
-      return matchup(battle, target, foeActive) - currentMatchup - 0.4;
-    }
-    const move = battle.dex?.moves.get(option.id);
-    if (!move || !mine) return 0;
-    let score = 0;
-    if (move.category !== 'Status') {
-      score = offense(battle, { ...mine, moveSlots: [{ id: option.id }] } as SimPokemon, foeActive);
-    } else {
-      score = 0.25;
-      if (move.heal) score += lowHp ? 1.2 : -0.2;
-      if (move.boosts && move.target === 'self') score += hpFraction(mine) > 0.7 && battle.turn < 12 ? 0.6 : -0.1;
-      if (move.sideCondition) score += battle.turn < 8 ? 0.5 : 0;
-    }
-    // Terastallizing is allowed but only favoured for a strong attack.
-    if (option.tera) score = score * 1.1 - 0.3 + (random() < 0.3 ? 0.5 : 0);
-    return score;
-  });
+  const scores = scoreOptions(battle, sideIndex, legal, random);
   return (legal[sample(scores, options.temperature, random)] as ChoiceOption).choice;
 }
