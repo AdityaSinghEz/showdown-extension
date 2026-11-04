@@ -180,12 +180,14 @@ All processing happens locally in the browser. The extension requests no permiss
 The win-probability model only sees a snapshot, so it misjudges positions that depend on what happens next, such as a boosted sweeper or a setup move. A rollout plays the position forward a few turns with the practice player and averages how those games end.
 
 ```powershell
-npm run review:game -- --id gen9randombattle-2701773375 --model data/model-rich.json --rollouts 6 --depth 6 --max-options 5 --samples 1
+npm run review:game -- --id gen9randombattle-2701773375 --model data/model-rich.json
 ```
+
+Rollouts are on by default (6 forward games, 6 turns deep, 5 options per side, weight 0.5). Use `--rollouts 0` for the model-only review.
 
 - `--rollouts` is the number of forward games per option pair (0 turns rollouts off).
 - `--depth` is how many turns each forward game runs before the model reads the position.
 - `--max-options` simulates only the most promising options per side, plus the one played, which keeps a review to about two seconds a turn.
-- `--rollout-weight` mixes rollouts with the model reading (1 is rollouts only, 0 is model only).
+- `--rollout-weight` mixes rollouts with the model reading (1 is rollouts only, 0 is model only). The default is 0.5: on held-out games rollouts beat the model early but are overconfident late, and the blend scored best overall. On held-out games, rollouts alone beat the model in the early and middle game but were overconfident late, and an even blend scored best overall.
 
-To check whether rollouts really predict winners better, run `npm run eval:rollout -- --model data/model-rich.json --games 40`. It scores both on held-out human games.
+To check whether rollouts really predict winners better, run `npm run eval:rollout -- --model data/model-rich.json --games 40`. It scores several mixes of the two on held-out human games and shows the best weight per stage of the game.

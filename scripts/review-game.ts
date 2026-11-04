@@ -54,11 +54,11 @@ async function main(): Promise<void> {
       data: { type: 'string', default: 'data' },
       model: { type: 'string', default: 'data/model.json' },
       'sim-root': { type: 'string', default: '..' },
-      samples: { type: 'string', default: '4' },
-      rollouts: { type: 'string', default: '0' },
+      samples: { type: 'string' },
+      rollouts: { type: 'string', default: '6' },
       depth: { type: 'string', default: '6' },
-      'rollout-weight': { type: 'string', default: '1' },
-      'max-options': { type: 'string', default: '0' },
+      'rollout-weight': { type: 'string', default: '0.5' },
+      'max-options': { type: 'string', default: '5' },
       turns: { type: 'string' },
       'no-tera': { type: 'boolean', default: false },
     },
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   const rollout = rollouts > 0 ? { rollouts, depth, weight } : undefined;
   const maxOptions = Number(values['max-options']);
   if (!Number.isInteger(maxOptions) || maxOptions < 0) throw new Error('--max-options must be a whole number, 0 or more');
-  const samples = Number(values.samples);
+  const samples = values.samples === undefined ? (rollouts > 0 ? 1 : 4) : Number(values.samples);
   if (!Number.isInteger(samples) || samples < 1) throw new Error('--samples must be a whole number of 1 or more');
   const [fromTurn, toTurn] = parseRange(values.turns);
 

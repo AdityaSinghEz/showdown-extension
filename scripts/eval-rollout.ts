@@ -27,13 +27,12 @@ import { rolloutValue } from '../lib/review/rollout';
 import { loadBuiltSim, type SimModule } from '../lib/review/sim';
 import { simFolderName, versionFromInputLog } from '../lib/replay/version';
 
+/** Weights of the rollout reading tried against the model reading; 0 is the model alone, 1 is rollouts alone. */
+const WEIGHTS = [0, 0.25, 0.5, 0.75, 1];
+
 interface Tally {
   count: number;
-  modelLoss: number;
-  rolloutLoss: number;
-  blendLoss: number;
-  modelRight: number;
-  rolloutRight: number;
+  loss: number[];
 }
 
 function logLoss(p: number, y: number): number {
@@ -51,6 +50,7 @@ async function main(): Promise<void> {
       every: { type: 'string', default: '3' },
       rollouts: { type: 'string', default: '6' },
       depth: { type: 'string', default: '6' },
+      weight: { type: 'string', default: '0.5' },
       'test-percent': { type: 'string', default: '20' },
     },
   });
@@ -59,6 +59,8 @@ async function main(): Promise<void> {
   const every = Number(values.every);
   const rollouts = Number(values.rollouts);
   const depth = Number(values.depth);
+  const weight = Number(values.weight);
+  if (!(weight >= 0 && weight <= 1)) throw new Error('--weight must be between 0 and 1');
   const testPercent = Number(values['test-percent']);
   const model = JSON.parse(await readFile(values.model ?? 'data/model-rich.json', 'utf8')) as LogisticModel;
 
@@ -72,7 +74,7 @@ async function main(): Promise<void> {
   const sims = new Map<string, SimModule>();
   const stages: Record<string, Tally> = {};
   const tally = (stage: string): Tally =>
-    (stages[stage] ??= { count: 0, modelLoss: 0, rolloutLoss: 0, blendLoss: 0, modelRight: 0, rolloutRight: 0 });
+    (stages[stage] ??= { count: 0, loss: WEIGHTS.map(() => 0) });
 
   let games = 0;
   for (const file of files) {
@@ -97,11 +99,9 @@ async function main(): Promise<void> {
           const pm = winProbability(battle, model);
           const pr = rolloutValue(sim, battle, model, { rollouts, depth, seed: battle.turn });
           t.count += 1;
-          t.modelLoss += logLoss(pm, y);
-          t.rolloutLoss += logLoss(pr, y);
-          t.blendLoss += logLoss(0.5 * pm + 0.5 * pr, y);
-          t.modelRight += (pm > 0.5) === (y === 1) ? 1 : 0;
-          t.rolloutRight += (pr > 0.5) === (y === 1) ? 1 : 0;
+          WEIGHTS.forEach((w, i) => {
+            t.loss[i] = (t.loss[i] as number) + logLoss(w * pr + (1 - w) * pm, y);
+          });
         },
       });
       games += 1;
@@ -111,22 +111,25 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`\n${games} held-out games, every ${every}rd turn, ${rollouts} rollouts of ${depth} turns. Lower log loss is better.`);
-  console.log('stage        positions   model loss   rollout loss   50/50 blend   model acc   rollout acc');
-  const all: Tally = { count: 0, modelLoss: 0, rolloutLoss: 0, blendLoss: 0, modelRight: 0, rolloutRight: 0 };
+  console.log(`\n${games} held-out games, blend = ${weight} rollout + ${1 - weight} model, every ${every}rd turn, ${rollouts} rollouts of ${depth} turns.`);
+  console.log('Log loss by weight given to the rollouts (0 = model alone, 1 = rollouts alone). Lower is better.');
+  console.log(`stage        positions   ${WEIGHTS.map((w) => `w=${w}`.padStart(8)).join(' ')}   best weight`);
+  const all: Tally = { count: 0, loss: WEIGHTS.map(() => 0) };
+  const row = (name: string, t: Tally): void => {
+    const means = t.loss.map((l) => l / t.count);
+    const best = WEIGHTS[means.indexOf(Math.min(...means))];
+    console.log(`${name.padEnd(12)} ${String(t.count).padStart(9)}   ${means.map((m) => m.toFixed(4).padStart(8)).join(' ')}   ${best}`);
+  };
   for (const stage of ['turns 1-8', 'turns 9-20', 'turns 21+']) {
     const t = stages[stage];
     if (!t || t.count === 0) continue;
-    for (const key of Object.keys(all) as (keyof Tally)[]) all[key] += t[key];
-    console.log(
-      `${stage.padEnd(12)} ${String(t.count).padStart(9)}   ${(t.modelLoss / t.count).toFixed(4).padStart(10)}   ${(t.rolloutLoss / t.count).toFixed(4).padStart(12)}   ${(t.blendLoss / t.count).toFixed(4).padStart(11)}   ${((t.modelRight / t.count) * 100).toFixed(1).padStart(8)}%   ${((t.rolloutRight / t.count) * 100).toFixed(1).padStart(10)}%`,
-    );
+    all.count += t.count;
+    t.loss.forEach((l, i) => {
+      all.loss[i] = (all.loss[i] as number) + l;
+    });
+    row(stage, t);
   }
-  if (all.count > 0) {
-    console.log(
-      `${'all'.padEnd(12)} ${String(all.count).padStart(9)}   ${(all.modelLoss / all.count).toFixed(4).padStart(10)}   ${(all.rolloutLoss / all.count).toFixed(4).padStart(12)}   ${(all.blendLoss / all.count).toFixed(4).padStart(11)}   ${((all.modelRight / all.count) * 100).toFixed(1).padStart(8)}%   ${((all.rolloutRight / all.count) * 100).toFixed(1).padStart(10)}%`,
-    );
-  }
+  if (all.count > 0) row('all', all);
 }
 
 main().catch((error: unknown) => {
