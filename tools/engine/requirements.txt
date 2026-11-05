@@ -1,0 +1,2 @@
+# Installed with the Gen 9 (Terastallization) engine build; see README.md in this folder.
+poke-engine==0.0.48
