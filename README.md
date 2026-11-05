@@ -191,3 +191,19 @@ Rollouts are on by default (6 forward games, 6 turns deep, 5 options per side, w
 - `--rollout-weight` mixes rollouts with the model reading (1 is rollouts only, 0 is model only). The default is 0.5: on held-out games rollouts beat the model early but are overconfident late, and the blend scored best overall. On held-out games, rollouts alone beat the model in the early and middle game but were overconfident late, and an even blend scored best overall.
 
 To check whether rollouts really predict winners better, run `npm run eval:rollout -- --model data/model-rich.json --games 40`. It scores several mixes of the two on held-out human games and shows the best weight per stage of the game.
+
+## Judging with the engine behind Foul Play
+
+The rollout judge uses a simple practice bot, which limits its accuracy. For a stronger judge, positions can be searched with poke-engine, the MIT-licensed Rust engine used by Foul Play, which its author reports near the top of the Gen 9 Random Battle ladder. Setup is in `tools/engine/README.md`.
+
+```powershell
+npm run engine:review -- --id gen9randombattle-2701773375 --python .venv\Scripts\python.exe
+```
+
+To measure how well it predicts winners compared with the model and rollouts, and whether the winner of a game tends to have fewer engine-graded errors:
+
+```powershell
+npm run engine:export -- --games 120 --every 3 --split test
+.venv\Scripts\python.exe tools/engine/search.py data/engine-states.jsonl data/engine-results.jsonl
+npm run engine:report
+```
