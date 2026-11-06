@@ -40,7 +40,8 @@ const pct = (value: number): string => `${(value * 100).toFixed(0)}%`;
 function describe(judgement: EngineJudgement): string {
   if (judgement.grade === 'unknown') return 'unknown';
   if (judgement.grade === 'forced') return 'forced';
-  return `${judgement.grade} -${((judgement.loss ?? 0) * 100).toFixed(1)}`;
+  const share = judgement.share === null ? '' : `, engine plays it ${pct(judgement.share)}`;
+  return `${judgement.grade} -${((judgement.loss ?? 0) * 100).toFixed(1)}${share}`;
 }
 
 async function main(): Promise<void> {
@@ -71,6 +72,11 @@ async function main(): Promise<void> {
         console.log(`   ${name}: ${state.played[name] ?? '?'}  [${describe(judgement)}]`);
         if (judgement.grade !== 'best' && judgement.grade !== 'forced' && judgement.grade !== 'unknown') {
           console.log(`      engine tried most: ${judgement.best.slice(0, 3).map((b) => `${b.engine} ${pct(b.share)}`).join(', ')}`);
+        }
+        if (judgement.tera) {
+          const t = judgement.tera;
+          const worthShowing = t.action === 'used' || t.grade !== 'best' || t.gain >= 0.05;
+          if (worthShowing) console.log(`      Tera: ${t.grade} (${t.note}; ${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`);
         }
       }
     }
