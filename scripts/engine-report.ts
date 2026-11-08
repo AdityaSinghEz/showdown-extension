@@ -15,7 +15,9 @@ import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { hashString } from '../lib/model/split';
 import { applyCalibration, fitCalibration } from '../lib/review/calibrate';
-import { judgeWithEngine, rootValue, type EngineJudgement, type EnginePositionResult } from '../lib/review/engine-results';
+import { judgeAgainstReply } from '../lib/review/reply';
+import { evalBar, summarize, verdictFor, winChances, type Verdict } from '../lib/review/verdict';
+import { UNMODELLED_MOVES, baseMove, judgeWithEngine, rootValue, type EngineJudgement, type EnginePositionResult } from '../lib/review/engine-results';
 
 interface Exported {
   id: string;
@@ -64,21 +66,47 @@ async function main(): Promise<void> {
   if (values.id !== undefined) {
     const game = rows.filter((r) => r.state.id === values.id).sort((a, b) => a.state.turn - b.state.turn);
     if (game.length === 0) throw new Error(`No searched positions for ${values.id}`);
+    const names = { p1: 'You (p1)', p2: 'Opponent (p2)' };
+    const tally = { p1: [] as Verdict[], p2: [] as Verdict[] };
     for (const { state, result } of game) {
-      const p1 = judgeWithEngine(result.p1 ?? [], state.played.p1);
-      const p2 = judgeWithEngine(result.p2 ?? [], state.played.p2);
-      console.log(`Turn ${String(state.turn).padStart(2)}  engine value for p1: ${pct(rootValue(result.p1 ?? []) ?? 0.5)}`);
-      for (const [name, judgement] of [['p1', p1], ['p2', p2]] as const) {
-        console.log(`   ${name}: ${state.played[name] ?? '?'}  [${describe(judgement)}]`);
-        if (judgement.grade !== 'best' && judgement.grade !== 'forced' && judgement.grade !== 'unknown') {
-          console.log(`      engine tried most: ${judgement.best.slice(0, 3).map((b) => `${b.engine} ${pct(b.share)}`).join(', ')}`);
+      const chances = winChances(rootValue(result.p1 ?? []), rootValue(result.p2 ?? []));
+      console.log(
+        `\nTurn ${String(state.turn).padStart(2)}   p1 ${String(chances.p1).padStart(3)}% ${evalBar(chances.p1)} ${String(chances.p2).padStart(3)}% p2`,
+      );
+      for (const name of ['p1', 'p2'] as const) {
+        const played = state.played[name] ?? null;
+        const other = state.played[name === 'p1' ? 'p2' : 'p1'] ?? null;
+        const judgement = judgeWithEngine(result[name] ?? [], played);
+        const reply = result.matrix ? judgeAgainstReply(result.matrix, name, played, other) : null;
+        const verdict = verdictFor(judgement, reply);
+        tally[name].push(verdict);
+        const score = verdict.score === null ? '' : `  ${verdict.score}/100`;
+        console.log(`  ${names[name]}: ${played ?? '?'}  ->  ${verdict.tag.toUpperCase()}${score}`);
+        if (judgement.value !== null && judgement.top !== null && judgement.grade !== 'forced') {
+          const bestMove = judgement.topMove;
+          const gap = Math.round((judgement.top - judgement.value) * 100);
+          console.log(
+            `      win chance after this move ${Math.round(judgement.value * 100)}%, after the engine's best${bestMove ? ` (${bestMove})` : ''} ${Math.round(judgement.top * 100)}%${gap > 0 ? `  (cost ${gap} ${gap === 1 ? 'point' : 'points'})` : ''}`,
+          );
+        } else if (judgement.grade === 'unknown') {
+          const why = played !== null && UNMODELLED_MOVES.has(baseMove(played)) ? 'the engine cannot model this move' : 'the engine did not try this move';
+          console.log(`      not judged: ${why}`);
+        }
+        if (verdict.tag === 'good prediction' && other !== null) {
+          console.log(`      the engine disliked it overall, but against their actual ${other} it was the right move`);
         }
         if (judgement.tera) {
           const t = judgement.tera;
           const worthShowing = t.action === 'used' || t.grade !== 'best' || t.gain >= 0.05;
-          if (worthShowing) console.log(`      Tera: ${t.grade} (${t.note}; ${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`);
+          if (worthShowing) console.log(`      Tera: ${t.grade.toUpperCase()} - ${t.note} (${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`);
         }
       }
+    }
+    console.log('\nSummary');
+    for (const name of ['p1', 'p2'] as const) {
+      const sum = summarize(tally[name]);
+      const mix = Object.entries(sum.counts).map(([tag, n]) => `${n} ${tag}`).join(', ');
+      console.log(`  ${names[name]}: average score ${sum.average === null ? 'n/a' : `${sum.average}/100`} over ${sum.judged} judged moves  (${mix})`);
     }
     return;
   }
