@@ -16,8 +16,8 @@ import { parseArgs } from 'node:util';
 import { hashString } from '../lib/model/split';
 import { applyCalibration, fitCalibration } from '../lib/review/calibrate';
 import { judgeAgainstReply } from '../lib/review/reply';
-import { evalBar, summarize, verdictFor, winChances, type Verdict } from '../lib/review/verdict';
-import { UNMODELLED_MOVES, baseMove, judgeWithEngine, rootValue, type EngineJudgement, type EnginePositionResult } from '../lib/review/engine-results';
+import { chanceAfterMoves, evalBar, luckSwing, summarize, verdictFor, winChances, type Verdict } from '../lib/review/verdict';
+import { bestExpectedValue, judgeWithEngine, rootValue, type EngineJudgement, type EnginePositionResult } from '../lib/review/engine-results';
 
 interface Exported {
   id: string;
@@ -68,20 +68,35 @@ async function main(): Promise<void> {
     if (game.length === 0) throw new Error(`No searched positions for ${values.id}`);
     const names = { p1: 'You (p1)', p2: 'Opponent (p2)' };
     const tally = { p1: [] as Verdict[], p2: [] as Verdict[] };
+    const misses = { p1: [] as { turn: number; move: string; cost: number }[], p2: [] as { turn: number; move: string; cost: number }[] };
+    let afterPrevious: number | null = null;
     for (const { state, result } of game) {
-      const chances = winChances(rootValue(result.p1 ?? []), rootValue(result.p2 ?? []));
+      // With the equal-effort tables the bar comes from your table alone, so it is one consistent
+      // evaluation; combining the two sides' tables made them disagree (each tests only some replies).
+      const yours = bestExpectedValue(result.q?.p1);
+      const chances = yours !== null ? winChances(yours, null) : winChances(rootValue(result.p1 ?? []), rootValue(result.p2 ?? []));
+      const swing = luckSwing(afterPrevious, chances.p1);
+      const luck =
+        swing !== null && Math.abs(swing) >= 15
+          ? `   (moved ${swing > 0 ? '+' : ''}${swing} points ${swing > 0 ? 'your way' : "the opponent's way"} beyond what the moves explain: usually luck, like a crit, a miss or a damage roll)`
+          : '';
       console.log(
-        `\nTurn ${String(state.turn).padStart(2)}   p1 ${String(chances.p1).padStart(3)}% ${evalBar(chances.p1)} ${String(chances.p2).padStart(3)}% p2`,
+        `\nTurn ${String(state.turn).padStart(2)}   p1 ${String(chances.p1).padStart(3)}% ${evalBar(chances.p1)} ${String(chances.p2).padStart(3)}% p2${luck}`,
       );
+      const values = { p1: null as number | null, p2: null as number | null };
       for (const name of ['p1', 'p2'] as const) {
         const played = state.played[name] ?? null;
         const other = state.played[name === 'p1' ? 'p2' : 'p1'] ?? null;
-        const judgement = judgeWithEngine(result[name] ?? [], played);
+        const judgement = judgeWithEngine(result[name] ?? [], played, result.q?.[name], other);
         const reply = result.matrix ? judgeAgainstReply(result.matrix, name, played, other) : null;
         const verdict = verdictFor(judgement, reply);
         tally[name].push(verdict);
+        values[name] = judgement.value;
+        if (judgement.value !== null && judgement.top !== null && judgement.top - judgement.value > 0) {
+          misses[name].push({ turn: state.turn, move: played ?? '?', cost: Math.round((judgement.top - judgement.value) * 100) });
+        }
         const score = verdict.score === null ? '' : `  ${verdict.score}/100`;
-        console.log(`  ${names[name]}: ${played ?? '?'}  ->  ${verdict.tag.toUpperCase()}${score}`);
+        console.log(`  ${names[name]}: ${played ?? '?'}  ->  ${verdict.tag.toUpperCase()}${score}${verdict.approximate ? '  (approximate: the engine rates this move roughly)' : ''}`);
         if (judgement.value !== null && judgement.top !== null && judgement.grade !== 'forced') {
           const bestMove = judgement.topMove;
           const gap = Math.round((judgement.top - judgement.value) * 100);
@@ -89,24 +104,32 @@ async function main(): Promise<void> {
             `      win chance after this move ${Math.round(judgement.value * 100)}%, after the engine's best${bestMove ? ` (${bestMove})` : ''} ${Math.round(judgement.top * 100)}%${gap > 0 ? `  (cost ${gap} ${gap === 1 ? 'point' : 'points'})` : ''}`,
           );
         } else if (judgement.grade === 'unknown') {
-          const why = played !== null && UNMODELLED_MOVES.has(baseMove(played)) ? 'the engine cannot model this move' : 'the engine did not try this move';
-          console.log(`      not judged: ${why}`);
+          console.log('      not judged: the choice that was played could not be matched to the options');
+        }
+        if (judgement.vsReply && (verdict.tag === 'good prediction' || judgement.vsReply.best - judgement.vsReply.value > 0.05)) {
+          const v = judgement.vsReply;
+          console.log(
+            `      against their actual ${v.reply}: this move ${Math.round(v.value * 100)}%, the best was ${v.bestMove} ${Math.round(v.best * 100)}%`,
+          );
         }
         if (verdict.tag === 'good prediction' && other !== null) {
           console.log(`      the engine disliked it overall, but against their actual ${other} it was the right move`);
         }
         if (judgement.tera) {
           const t = judgement.tera;
-          const worthShowing = t.action === 'used' || t.grade !== 'best' || t.gain >= 0.05;
-          if (worthShowing) console.log(`      Tera: ${t.grade.toUpperCase()} - ${t.note} (${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`);
+          const worthShowing = t.action === 'used' || t.grade !== 'best' || (t.gain ?? 0) >= 0.05;
+          if (worthShowing) console.log(`      Tera: ${t.grade.toUpperCase()} - ${t.note} ${t.gain === null ? '' : ` (${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`}`);
         }
       }
+      afterPrevious = chanceAfterMoves(values.p1, result.q?.p1 ? null : values.p2);
     }
     console.log('\nSummary');
     for (const name of ['p1', 'p2'] as const) {
       const sum = summarize(tally[name]);
       const mix = Object.entries(sum.counts).map(([tag, n]) => `${n} ${tag}`).join(', ');
+      const worst = [...misses[name]].sort((a, b) => b.cost - a.cost).slice(0, 3).filter((m) => m.cost >= 5);
       console.log(`  ${names[name]}: average score ${sum.average === null ? 'n/a' : `${sum.average}/100`} over ${sum.judged} judged moves  (${mix})`);
+      if (worst.length > 0) console.log(`      biggest misses: ${worst.map((m) => `turn ${m.turn} ${m.move} (-${m.cost})`).join(', ')}`);
     }
     return;
   }
