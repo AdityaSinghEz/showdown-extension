@@ -78,7 +78,7 @@ async function main(): Promise<void> {
       const swing = luckSwing(afterPrevious, chances.p1);
       const luck =
         swing !== null && Math.abs(swing) >= 15
-          ? `   (moved ${swing > 0 ? '+' : ''}${swing} points ${swing > 0 ? 'your way' : "the opponent's way"} beyond what the moves explain: usually luck, like a crit, a miss or a damage roll)`
+          ? `   (moved ${swing > 0 ? '+' : ''}${swing} points ${swing > 0 ? 'your way' : "the opponent's way"} beyond the two moves played: luck, like a crit, a miss or a damage roll, or something revealed, like a Tera or an item)`
           : '';
       console.log(
         `\nTurn ${String(state.turn).padStart(2)}   p1 ${String(chances.p1).padStart(3)}% ${evalBar(chances.p1)} ${String(chances.p2).padStart(3)}% p2${luck}`,
@@ -91,7 +91,8 @@ async function main(): Promise<void> {
         const reply = result.matrix ? judgeAgainstReply(result.matrix, name, played, other) : null;
         const verdict = verdictFor(judgement, reply);
         tally[name].push(verdict);
-        values[name] = judgement.value;
+        // After both real moves, not the average over the replies the opponent might have made.
+        values[name] = name === 'p1' && judgement.vsReply ? judgement.vsReply.value : judgement.value;
         if (judgement.value !== null && judgement.top !== null && judgement.top - judgement.value > 0) {
           misses[name].push({ turn: state.turn, move: played ?? '?', cost: Math.round((judgement.top - judgement.value) * 100) });
         }
@@ -128,7 +129,7 @@ async function main(): Promise<void> {
       const sum = summarize(tally[name]);
       const mix = Object.entries(sum.counts).map(([tag, n]) => `${n} ${tag}`).join(', ');
       const worst = [...misses[name]].sort((a, b) => b.cost - a.cost).slice(0, 3).filter((m) => m.cost >= 5);
-      console.log(`  ${names[name]}: average score ${sum.average === null ? 'n/a' : `${sum.average}/100`} over ${sum.judged} judged moves  (${mix})`);
+      console.log(`  ${names[name]}: average score ${sum.average === null ? 'n/a' : `${sum.average}/100`} over ${sum.judged} moves${sum.approximate > 0 ? ` (${sum.approximate} rough-engine ${sum.approximate === 1 ? 'move' : 'moves'} graded but not counted)` : ''}  (${mix})`);
       if (worst.length > 0) console.log(`      biggest misses: ${worst.map((m) => `turn ${m.turn} ${m.move} (-${m.cost})`).join(', ')}`);
     }
     return;
