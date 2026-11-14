@@ -11,7 +11,6 @@
  */
 
 import { gradeLoss, type Grade } from './grade';
-import { solveMatrixGame } from './matrix';
 import type { PayoffMatrix } from './reply';
 
 /** One choice's result from the search. */
@@ -30,6 +29,8 @@ export interface QTable {
   cols: string[];
   /** How often the opponent's search played each reply; 0 for a reply included only because it was played. */
   weights: number[];
+  /** The first few reasons the engine gave for cells it could not play out, if any. */
+  errors?: string[];
   /** `values[i][j]` is the side's own win probability for `rows[i]` against `cols[j]`, or `null` when it could not be simulated. */
   values: (number | null)[][];
 }
@@ -45,6 +46,8 @@ export interface EnginePositionResult {
   matrix?: PayoffMatrix;
   /** Equal-effort values of every choice, per side. */
   q?: { p1?: QTable; p2?: QTable };
+  /** Values from the full-information search (nothing hidden), used only for the eval bar. */
+  bar?: { p1?: QTable };
   error?: string;
 }
 
@@ -237,14 +240,22 @@ export function judgeWithEngine(
   return { loss, grade, approximate, best, teraGain: fair ? fair.tera?.gain ?? null : teraGainFor(side, played, visits), share, value: mineValue, top, topMove, vsReply: fair ? fair.vsReply : null, tera };
 }
 
+/** The most win probability a move can cost and still be raised to "best" because the engine plays it. */
+export const PRIORITY_BEST_LOSS = 0.05;
+
+/** The most win probability a move can cost and still be raised to "good" because the engine plays it. */
+export const PRIORITY_GOOD_LOSS = 0.1;
+
 /**
- * The move's grade: by the win-probability gap, adjusted by how often the
- * engine itself plays the move. A move the engine favours is not a mistake.
+ * The move's grade: by the win-probability gap, adjusted by how often the engine itself plays
+ * the move. A move the engine favours is not a mistake, but how often it plays a move never
+ * hides a large measured cost: a move that loses more than {@link PRIORITY_GOOD_LOSS} keeps its
+ * grade from the gap.
  */
 export function gradeWithPriority(loss: number, share: number): Grade {
-  if (share >= BEST_SHARE) return 'best';
+  if (share >= BEST_SHARE && loss < PRIORITY_BEST_LOSS) return 'best';
   const grade = gradeLoss(loss);
-  if (share >= GOOD_SHARE && (grade === 'inaccuracy' || grade === 'mistake' || grade === 'blunder')) return 'good';
+  if (share >= GOOD_SHARE && loss < PRIORITY_GOOD_LOSS && (grade === 'inaccuracy' || grade === 'mistake' || grade === 'blunder')) return 'good';
   return grade;
 }
 
@@ -309,36 +320,91 @@ interface QJudgement {
   tera: TeraJudgement | null;
 }
 
+/** How sharply the smoothed equilibrium prefers a better reply, in win probability. Lower is closer to exact play. */
+export const MIX_SHARPNESS = 0.05;
+
 /**
- * The opponent's best mix of replies for a table: the mix that holds this side's best move
- * to the least, found by solving the table as a zero-sum matrix game.
+ * The opponent's mix of replies for a table: a smoothed ("logit") equilibrium of the table
+ * read as a zero-sum game.
  *
- * The search's own count of how often it played each reply is not used, because when a
- * side is losing every reply looks about equally bad and that count is close to arbitrary
- * (the same position gave Sticky Web 12% in one run and 54% in another). Only rows with a
- * value against every reply take part. Returns `null` if no row is complete.
+ * Each side leans towards what pays more, but never goes all the way, so replies that are
+ * nearly as good keep a share. An exact equilibrium is not used because it is often not
+ * unique: when several of a side's moves are about equally good the solver returns one
+ * arbitrary answer, and a move outside that group can swing from best to blunder from one
+ * run to the next. The smoothed mix is unique and moves gently when the values do.
+ *
+ * The search's own count of how often it played each reply is not used either: when a side
+ * is losing every reply looks about equally bad and that count is close to arbitrary (the
+ * same position gave Sticky Web 12% in one run and 54% in another). Only rows with a value
+ * against every reply take part. Returns `null` if no row is complete.
  */
 function opponentMix(table: QTable): number[] | null {
-  const complete = table.values.filter((line) => line.length === table.cols.length && line.every((value) => value !== null));
-  if (complete.length === 0 || table.cols.length === 0) return null;
-  try {
-    return solveMatrixGame(complete as number[][]).columnStrategy;
-  } catch {
-    return null;
+  // Columns with weight 0 were added only because the opponent played them; they do not take part
+  // in the mix, so a reply the search never considered cannot distort the other values.
+  // A reply the engine could not play out against any of our choices (for example a switch it could
+  // not simulate) is left out and the others keep their relative weight; so is a choice it could not
+  // play out against any reply. Without this one unplayable column made every row incomplete and the
+  // whole table unusable.
+  const playable = table.values.filter((line) => line.some((value) => value !== null));
+  const cols = table.cols.map((_, col) => col).filter((col) => playable.some((line) => line[col] !== null && line[col] !== undefined));
+  const used = cols.filter((col) => (table.weights[col] ?? 0) > 0);
+  const live = used.length > 0 ? used : cols;
+  const rows = playable
+    .filter((line) => line.length === table.cols.length && live.every((col) => line[col] !== null))
+    .map((line) => live.map((col) => line[col] as number));
+  const n = live.length;
+  if (rows.length === 0 || n === 0) return null;
+  const softmax = (scores: number[]): number[] => {
+    const top = Math.max(...scores);
+    const exp = scores.map((score) => Math.exp((score - top) / MIX_SHARPNESS));
+    const total = exp.reduce((sum, value) => sum + value, 0);
+    return exp.map((value) => value / total);
+  };
+  let x = rows.map(() => 1 / rows.length);
+  let y = Array.from({ length: n }, () => 1 / n);
+  const step = 0.05;
+  for (let iteration = 0; iteration < 800; iteration++) {
+    const rowValue = rows.map((line) => line.reduce((sum, value, col) => sum + value * (y[col] ?? 0), 0));
+    const colValue = Array.from({ length: n }, (_, col) => rows.reduce((sum, line, row) => sum + (line[col] ?? 0) * (x[row] ?? 0), 0));
+    const wantX = softmax(rowValue);
+    const wantY = softmax(colValue.map((value) => -value));
+    x = x.map((value, row) => (1 - step) * value + step * (wantX[row] ?? 0));
+    y = y.map((value, col) => (1 - step) * value + step * (wantY[col] ?? 0));
   }
+  const mix = table.cols.map(() => 0);
+  live.forEach((col, k) => {
+    mix[col] = y[k] ?? 0;
+  });
+  return mix;
 }
 
 /**
  * Values the played move from a {@link QTable}.
  *
- * A move's value is its average over the opponent's best mix of replies (see
+ * A move's value is its average over the opponent's mix of replies (see
  * {@link opponentMix}). A move and its Terastallized version count as one move,
  * valued by the better of the two, so the move's grade does not depend on the Tera
  * decision, which is graded on its own from the difference between the two.
  *
  * @returns `null` when the table does not contain the played move.
  */
-export function judgeWithQ(table: QTable, played: string, reply: string | null): QJudgement | null {
+/**
+ * Drops replies that no choice could be played against. One reply the engine could not simulate
+ * would otherwise blank every row, because a value needs the whole mix of replies.
+ */
+function withoutDeadColumns(table: QTable): QTable {
+  const keep = table.cols.map((_, col) => col).filter((col) => table.values.some((line) => line[col] !== null && line[col] !== undefined));
+  if (keep.length === table.cols.length) return table;
+  return {
+    rows: table.rows,
+    cols: keep.map((col) => table.cols[col] as string),
+    weights: keep.map((col) => table.weights[col] ?? 0),
+    values: table.values.map((line) => keep.map((col) => line[col] ?? null)),
+  };
+}
+
+export function judgeWithQ(fullTable: QTable, played: string, reply: string | null): QJudgement | null {
+  const table = withoutDeadColumns(fullTable);
   const cells = table.values;
   const mix = opponentMix(table);
   const expected = (row: number): number | null => {
@@ -346,6 +412,7 @@ export function judgeWithQ(table: QTable, played: string, reply: string | null):
     let total = 0;
     for (let col = 0; col < table.cols.length; col++) {
       const value = cells[row]?.[col];
+      if ((mix[col] ?? 0) === 0) continue;
       if (value === null || value === undefined) return null;
       total += (mix[col] ?? 0) * value;
     }
