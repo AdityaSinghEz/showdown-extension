@@ -17,7 +17,7 @@ import { hashString } from '../lib/model/split';
 import { applyCalibration, fitCalibration } from '../lib/review/calibrate';
 import { judgeAgainstReply } from '../lib/review/reply';
 import { chanceAfterMoves, evalBar, luckSwing, summarize, verdictFor, winChances, type Verdict } from '../lib/review/verdict';
-import { bestExpectedValue, judgeWithEngine, rootValue, type EngineJudgement, type EnginePositionResult } from '../lib/review/engine-results';
+import { bestExpectedValue, judgeWithEngine, judgeWithQ, rootValue, type EngineJudgement, type EnginePositionResult } from '../lib/review/engine-results';
 
 interface Exported {
   id: string;
@@ -73,7 +73,8 @@ async function main(): Promise<void> {
     for (const { state, result } of game) {
       // With the equal-effort tables the bar comes from your table alone, so it is one consistent
       // evaluation; combining the two sides' tables made them disagree (each tests only some replies).
-      const yours = bestExpectedValue(result.q?.p1);
+      // The bar sees the whole battle; the grades below see only what each player could.
+      const yours = bestExpectedValue(result.bar?.p1) ?? bestExpectedValue(result.q?.p1);
       const chances = yours !== null ? winChances(yours, null) : winChances(rootValue(result.p1 ?? []), rootValue(result.p2 ?? []));
       const swing = luckSwing(afterPrevious, chances.p1);
       const luck =
@@ -107,10 +108,12 @@ async function main(): Promise<void> {
         } else if (judgement.grade === 'unknown') {
           console.log('      not judged: the choice that was played could not be matched to the options');
         }
-        if (judgement.vsReply && (verdict.tag === 'good prediction' || judgement.vsReply.best - judgement.vsReply.value > 0.05)) {
+        if (judgement.vsReply) {
           const v = judgement.vsReply;
+          const readCost = v.best - v.value;
+          const read = readCost >= 0.15 && verdict.tag !== 'good prediction' ? '   <- got read' : '';
           console.log(
-            `      against their actual ${v.reply}: this move ${Math.round(v.value * 100)}%, the best was ${v.bestMove} ${Math.round(v.best * 100)}%`,
+            `      against their actual ${v.reply}: this move ${Math.round(v.value * 100)}%, the best was ${v.bestMove} ${Math.round(v.best * 100)}%${read}`,
           );
         }
         if (verdict.tag === 'good prediction' && other !== null) {
@@ -122,7 +125,9 @@ async function main(): Promise<void> {
           if (worthShowing) console.log(`      Tera: ${t.grade.toUpperCase()} - ${t.note} ${t.gain === null ? '' : ` (${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`}`);
         }
       }
-      afterPrevious = chanceAfterMoves(values.p1, result.q?.p1 ? null : values.p2);
+      // Baseline for luck: the full-information value of the pair actually played.
+      const barPair = result.bar?.p1 && state.played.p1 && state.played.p2 ? judgeWithQ(result.bar.p1, state.played.p1, state.played.p2)?.vsReply?.value : undefined;
+      afterPrevious = barPair !== undefined && barPair !== null ? 100 * barPair : chanceAfterMoves(values.p1, result.q?.p1 ? null : values.p2);
     }
     console.log('\nSummary');
     for (const name of ['p1', 'p2'] as const) {

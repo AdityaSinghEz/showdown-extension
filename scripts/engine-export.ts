@@ -25,7 +25,7 @@ import type { LogisticModel } from '../lib/model/logistic';
 import { isTestGame } from '../lib/model/split';
 import { simFolderName, versionFromInputLog } from '../lib/replay/version';
 import { collectTurnStarts, legalOptions, matchChoice, type ChoiceOption } from '../lib/review/engine';
-import { engineOptions, toEngineState, type EngineOption } from '../lib/review/engine-state';
+import { engineOptions, hideTeraTypes, toEngineState, type EngineOption } from '../lib/review/engine-state';
 import { winProbability } from '../lib/review/position';
 import { rolloutValue } from '../lib/review/rollout';
 import { loadBuiltSim, type SimModule, type SimSide } from '../lib/review/sim';
@@ -34,7 +34,12 @@ interface Row {
   id: string;
   turn: number;
   y: number | null;
+  /** Position as side one sees it: side two's unrevealed Tera types are hidden. */
   state: unknown;
+  /** Position as side two sees it: side one's unrevealed Tera types are hidden. */
+  stateP2: unknown;
+  /** The whole battle, nothing hidden: used only for the eval bar. */
+  stateFull: unknown;
   p1: EngineOption[];
   p2: EngineOption[];
   played: { p1: string | null; p2: string | null };
@@ -116,7 +121,9 @@ async function main(): Promise<void> {
             id,
             turn: battle.turn,
             y: winners.get(id) ?? null,
-            state,
+            state: hideTeraTypes(state, 'sideTwo'),
+            stateP2: hideTeraTypes(state, 'sideOne'),
+            stateFull: state,
             p1: engineOptions(side1, options1),
             p2: engineOptions(side2, options2),
             played: { p1: null, p2: null },

@@ -13,7 +13,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import { baseMove, type EngineChoiceResult, type EnginePositionResult } from '../lib/review/engine-results';
+import { baseMove, type EngineChoiceResult, type EnginePositionResult, type QTable } from '../lib/review/engine-results';
 import type { EngineSide, EngineState } from '../lib/review/engine-state';
 
 interface StateRow {
@@ -59,6 +59,21 @@ function describeOptions(label: string, options: readonly EngineChoiceResult[], 
   }
 }
 
+/** Prints a Q table (rows: own choices, columns: the opponent's replies) so null cells and missing Tera rows are visible. */
+function describeTable(label: string, table: QTable | undefined): void {
+  console.log(`${label}`);
+  if (!table) {
+    console.log('   (none)');
+    return;
+  }
+  console.log(`   ${''.padEnd(22)}${table.cols.map((c) => c.slice(0, 11).padStart(12)).join('')}`);
+  console.log(`   ${'reply weight'.padEnd(22)}${table.weights.map((w) => `${Math.round(w * 100)}%`.padStart(12)).join('')}`);
+  table.rows.forEach((row, i) => {
+    const cells = table.values[i] ?? [];
+    console.log(`   ${row.slice(0, 21).padEnd(22)}${table.cols.map((_, j) => (cells[j] == null ? 'null' : `${Math.round(cells[j]! * 100)}%`).padStart(12)).join('')}`);
+  });
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -86,6 +101,12 @@ async function main(): Promise<void> {
   describeOptions('p1 search', result.p1 ?? [], row.played.p1);
   console.log('');
   describeOptions('p2 search', result.p2 ?? [], row.played.p2);
+  console.log('');
+  describeTable('p1 table (what p1 could see)', result.q?.p1);
+  console.log('');
+  describeTable('p2 table (what p2 could see)', result.q?.p2);
+  console.log('');
+  describeTable('bar table (full information)', result.bar?.p1);
 }
 
 main().catch((error: unknown) => {
