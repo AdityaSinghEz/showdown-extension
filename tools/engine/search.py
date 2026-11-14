@@ -102,11 +102,14 @@ def summarize(side_results):
 
 # A turn can split into dozens of outcomes (every damage roll, crit and extra hit). Only the
 # likeliest ones, covering about 97% of the chance, are searched, which keeps the pass fast.
-MAX_BRANCHES = 8
+MAX_BRANCHES = 5
 
 # Replies tested per choice. Too few and the opponent looks weaker than it is, because a reply it
 # rarely plays can still be its best answer to a particular move.
-MAX_REPLIES = 9
+MAX_REPLIES = 7
+
+# The eval bar only needs the value of the best choice, so it tests fewer replies and skips Tera versions.
+BAR_REPLIES = 5
 
 
 def side_value(state, for_side_one, iterations, threads):
@@ -124,7 +127,16 @@ def side_value(state, for_side_one, iterations, threads):
     return sum(o.total_score for o in options) / visits if visits else 0.5
 
 
-def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads):
+def engine_move(choice):
+    """Turns a search result's choice into the text `generate_instructions` accepts.
+
+    The search prints a switch as "switch <pokemon>", but `generate_instructions` wants only the
+    Pokemon's name, so the prefix is dropped. Moves, including "<move>-tera", are unchanged.
+    """
+    return choice[len("switch "):] if choice.startswith("switch ") else choice
+
+
+def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads, include_tera=True, max_replies=MAX_REPLIES):
     """Values every choice of one side against the opponent's likely replies, with equal effort.
 
     The main search gives most of its tries to the move it likes best, so the other
@@ -133,7 +145,7 @@ def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads)
     results is searched with the same effort every time, so the values can be compared.
 
     rows     every choice the side had
-    cols     the opponent's likely replies (enough to cover 98% of its mix, at most nine),
+    cols     the opponent's likely replies (enough to cover 95% of its mix, at most `max_replies`),
              plus the reply that was actually played
     weights  how often the opponent's search played each reply (0 for a reply included
              only because it was played)
@@ -142,6 +154,8 @@ def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads)
     """
     rows = []
     for option in own:
+        if not include_tera and option.move_choice.endswith("-tera"):
+            continue
         if option.move_choice not in rows:
             rows.append(option.move_choice)
     mix = {}
@@ -150,24 +164,26 @@ def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads)
     total = sum(mix.values())
     cols, weights, covered = [], [], 0
     for choice in sorted(mix, key=lambda c: -mix[c]):
-        if len(cols) >= MAX_REPLIES or (total and covered / total >= 0.98):
+        if len(cols) >= max_replies or (total and covered / total >= 0.95):
             break
         cols.append(choice)
         weights.append(mix[choice] / total if total else 0.0)
         covered += mix[choice]
-    if actual_reply is not None and actual_reply in mix and actual_reply not in cols:
+    if actual_reply is not None and actual_reply not in cols:
         cols.append(actual_reply)
         weights.append(0.0)
     values = []
+    errors = []
     for mine in rows:
         line = []
         for reply in cols:
             move_one, move_two = (mine, reply) if for_side_one else (reply, mine)
+            move_one, move_two = engine_move(move_one), engine_move(move_two)
             try:
                 branches = sorted(generate_instructions(state, move_one, move_two), key=lambda b: -b.percentage)
                 kept, mass = [], 0.0
                 for branch in branches:
-                    if len(kept) >= MAX_BRANCHES or (kept and mass >= 97.0):
+                    if len(kept) >= MAX_BRANCHES or (kept and mass >= 95.0):
                         break
                     kept.append(branch)
                     mass += branch.percentage
@@ -176,10 +192,13 @@ def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads)
                     after = state.apply_instructions(branch)
                     value += branch.percentage / mass * side_value(after, for_side_one, iterations, threads)
                 line.append(value)
-            except BaseException:  # a choice the engine cannot play out
+            except BaseException as error:  # a choice the engine cannot play out
                 line.append(None)
+                text = f"{mine} vs {reply}: {str(error)[:100]}"
+                if len(errors) < 3 and not any(e.split(': ', 1)[-1] == text.split(': ', 1)[-1] for e in errors):
+                    errors.append(text)
         values.append(line)
-    return {"rows": rows, "cols": cols, "weights": weights, "values": values}
+    return {"rows": rows, "cols": cols, "weights": weights, "values": values, "errors": errors}
 
 
 def payoff_matrix(state, milliseconds):
@@ -208,7 +227,7 @@ def main():
     parser.add_argument(
         "--q-iterations",
         type=int,
-        default=12000,
+        default=4000,
         help="search effort used to value each choice one turn ahead (0 turns the equal-effort values off)",
     )
     parser.add_argument(
@@ -227,7 +246,8 @@ def main():
     os.dup2(devnull, 2)
 
     done = failed = 0
-    with open(args.source) as src, open(args.out, "w") as out:
+    temp_out = f"{args.out}.{os.getpid()}.tmp"
+    with open(args.source) as src, open(temp_out, "w") as out:
         for line in src:
             row = json.loads(line)
             try:
@@ -257,12 +277,20 @@ def main():
                         "p1": q_table(state, True, result.side_one, result.side_two, played.get("p2"), args.q_iterations, args.threads),
                         "p2": q_table(state_two, False, p2_options, result_two.side_one, played.get("p1"), args.q_iterations, args.threads),
                     }
+                    if "stateFull" in row:
+                        # The bar uses everything in the battle, hidden Tera types included.
+                        state_full = build_state(row["stateFull"])
+                        result_full = monte_carlo_tree_search(state_full, iterations=args.iterations, threads=args.threads)
+                        record["bar"] = {
+                            "p1": q_table(state_full, True, result_full.side_one, result_full.side_two, played.get("p2"), max(1, args.q_iterations // 2), args.threads, include_tera=False, max_replies=BAR_REPLIES),
+                        }
             except BaseException as error:  # the engine reports bad input as a panic
                 failed += 1
                 record = {"id": row["id"], "turn": row["turn"], "error": str(error)[:120]}
             out.write(json.dumps(record) + "\n")
             done += 1
             print(f"{done} positions done ({failed} failed)", file=log, flush=True)
+    os.replace(temp_out, args.out)
     print(f"Searched {done} positions, {failed} failed. Wrote {args.out}", file=log, flush=True)
 
 

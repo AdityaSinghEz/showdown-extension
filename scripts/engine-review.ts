@@ -28,7 +28,7 @@ function main(): void {
     options: {
       id: { type: 'string' },
       python: { type: 'string', default: process.env.PYTHON ?? 'python' },
-      iterations: { type: 'string', default: '100000' },
+      iterations: { type: 'string', default: '40000' },
       data: { type: 'string', default: 'data' },
       model: { type: 'string', default: 'data/model-rich.json' },
       'sim-root': { type: 'string', default: '..' },
@@ -45,7 +45,7 @@ function main(): void {
     '--data', quote(dataDir), '--model', quote(values.model ?? ''), '--sim-root', quote(values['sim-root'] ?? '..'),
     '--out', quote(states),
   ]);
-  run(quote(values.python ?? 'python'), ['tools/engine/search.py', quote(states), quote(results), '--iterations', values.iterations ?? '100000']);
+  run(quote(values.python ?? 'python'), ['tools/engine/search.py', quote(states), quote(results), '--iterations', values.iterations ?? '40000']);
   run('npx', ['tsx', 'scripts/engine-report.ts', '--states', quote(states), '--results', quote(results), '--id', values.id]);
 }
 
