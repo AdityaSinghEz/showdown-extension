@@ -241,10 +241,10 @@ export function judgeWithEngine(
 }
 
 /** The most win probability a move can cost and still be raised to "best" because the engine plays it. */
-export const PRIORITY_BEST_LOSS = 0.05;
+export const PRIORITY_BEST_LOSS = 0.03;
 
 /** The most win probability a move can cost and still be raised to "good" because the engine plays it. */
-export const PRIORITY_GOOD_LOSS = 0.1;
+export const PRIORITY_GOOD_LOSS = 0.07;
 
 /**
  * The move's grade: by the win-probability gap, adjusted by how often the engine itself plays

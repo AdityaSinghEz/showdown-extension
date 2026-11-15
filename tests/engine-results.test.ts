@@ -112,8 +112,8 @@ describe('Terastallization', () => {
 
 describe('engine priority', () => {
   it('calls a move the engine plays often best, and never worse than good above a lower share', () => {
-    expect(gradeWithPriority(0.04, 0.35)).toBe('best');
-    expect(gradeWithPriority(0.08, 0.12)).toBe('good');
+    expect(gradeWithPriority(0.025, 0.35)).toBe('best');
+    expect(gradeWithPriority(0.06, 0.12)).toBe('good');
     expect(gradeWithPriority(0.4, 0.05)).toBe('blunder');
     expect(gradeWithPriority(0.01, 0.01)).toBe('best');
   });
@@ -122,6 +122,7 @@ describe('engine priority', () => {
     expect(gradeWithPriority(0.18, 0.4)).toBe('mistake');
     expect(gradeWithPriority(0.4, 0.35)).toBe('blunder');
     expect(gradeWithPriority(0.12, 0.2)).toBe('mistake');
+    expect(gradeWithPriority(0.04, 0.35)).toBe('good');
   });
 
   it('keeps a good grade as good when the share is high enough', () => {
