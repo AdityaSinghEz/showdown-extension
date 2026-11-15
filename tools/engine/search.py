@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from poke_engine import (
     Move,
@@ -108,8 +109,6 @@ MAX_BRANCHES = 5
 # rarely plays can still be its best answer to a particular move.
 MAX_REPLIES = 7
 
-# The eval bar only needs the value of the best choice, so it tests fewer replies and skips Tera versions.
-BAR_REPLIES = 5
 
 
 def side_value(state, for_side_one, iterations, threads):
@@ -123,8 +122,10 @@ def side_value(state, for_side_one, iterations, threads):
         return 0.0 if for_side_one else 1.0
     result = monte_carlo_tree_search(state, iterations=iterations, threads=threads)
     options = result.side_one if for_side_one else result.side_two
-    visits = sum(o.visits for o in options)
-    return sum(o.total_score for o in options) / visits if visits else 0.5
+    # The value of the most-visited choice, not the average over all of them: the average includes
+    # every weaker choice the search tried while exploring, which pulls a good position down.
+    best = max(options, key=lambda o: o.visits, default=None)
+    return best.total_score / best.visits if best is not None and best.visits else 0.5
 
 
 def engine_move(choice):
@@ -136,13 +137,17 @@ def engine_move(choice):
     return choice[len("switch "):] if choice.startswith("switch ") else choice
 
 
-def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads, include_tera=True, max_replies=MAX_REPLIES):
+def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads, include_tera=True, max_replies=MAX_REPLIES, all_replies=False, max_branches=MAX_BRANCHES):
     """Values every choice of one side against the opponent's likely replies, with equal effort.
 
     The main search gives most of its tries to the move it likes best, so the other
     moves are valued from very few tries and look worse than they are. Here each
     choice is played out one turn against each likely reply, and the position that
     results is searched with the same effort every time, so the values can be compared.
+
+    all_replies  test every legal reply, however rarely the search played it. The eval bar needs
+             this: leaving out a reply the opponent could have made raises the side's value, because
+             the opponent is then missing its best answer.
 
     rows     every choice the side had
     cols     the opponent's likely replies (enough to cover 95% of its mix, at most `max_replies`),
@@ -164,10 +169,12 @@ def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads,
     total = sum(mix.values())
     cols, weights, covered = [], [], 0
     for choice in sorted(mix, key=lambda c: -mix[c]):
-        if len(cols) >= max_replies or (total and covered / total >= 0.95):
+        if not all_replies and (len(cols) >= max_replies or (total and covered / total >= 0.95)):
             break
         cols.append(choice)
-        weights.append(mix[choice] / total if total else 0.0)
+        share = mix[choice] / total if total else 0.0
+        # A reply must keep a positive weight to count in the opponent's mix.
+        weights.append(max(share, 0.001) if all_replies else share)
         covered += mix[choice]
     if actual_reply is not None and actual_reply not in cols:
         cols.append(actual_reply)
@@ -183,7 +190,7 @@ def q_table(state, for_side_one, own, theirs, actual_reply, iterations, threads,
                 branches = sorted(generate_instructions(state, move_one, move_two), key=lambda b: -b.percentage)
                 kept, mass = [], 0.0
                 for branch in branches:
-                    if len(kept) >= MAX_BRANCHES or (kept and mass >= 95.0):
+                    if len(kept) >= max_branches or (kept and mass >= 95.0):
                         break
                     kept.append(branch)
                     mass += branch.percentage
@@ -246,6 +253,7 @@ def main():
     os.dup2(devnull, 2)
 
     done = failed = 0
+    started = time.time()
     temp_out = f"{args.out}.{os.getpid()}.tmp"
     with open(args.source) as src, open(temp_out, "w") as out:
         for line in src:
@@ -282,14 +290,14 @@ def main():
                         state_full = build_state(row["stateFull"])
                         result_full = monte_carlo_tree_search(state_full, iterations=args.iterations, threads=args.threads)
                         record["bar"] = {
-                            "p1": q_table(state_full, True, result_full.side_one, result_full.side_two, played.get("p2"), max(1, args.q_iterations // 2), args.threads, include_tera=False, max_replies=BAR_REPLIES),
+                            "p1": q_table(state_full, True, result_full.side_one, result_full.side_two, played.get("p2"), max(1, args.q_iterations // 2), args.threads, include_tera=False, all_replies=True, max_branches=3),
                         }
             except BaseException as error:  # the engine reports bad input as a panic
                 failed += 1
                 record = {"id": row["id"], "turn": row["turn"], "error": str(error)[:120]}
             out.write(json.dumps(record) + "\n")
             done += 1
-            print(f"{done} positions done ({failed} failed)", file=log, flush=True)
+            print(f"{done} positions done ({failed} failed, {(time.time() - started) / done:.1f}s each)", file=log, flush=True)
     os.replace(temp_out, args.out)
     print(f"Searched {done} positions, {failed} failed. Wrote {args.out}", file=log, flush=True)
 

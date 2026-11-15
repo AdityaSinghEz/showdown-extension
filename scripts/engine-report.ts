@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     const tally = { p1: [] as Verdict[], p2: [] as Verdict[] };
     const misses = { p1: [] as { turn: number; move: string; cost: number }[], p2: [] as { turn: number; move: string; cost: number }[] };
     let afterPrevious: number | null = null;
+    const swings: number[] = [];
     for (const { state, result } of game) {
       // With the equal-effort tables the bar comes from your table alone, so it is one consistent
       // evaluation; combining the two sides' tables made them disagree (each tests only some replies).
@@ -77,6 +78,7 @@ async function main(): Promise<void> {
       const yours = bestExpectedValue(result.bar?.p1) ?? bestExpectedValue(result.q?.p1);
       const chances = yours !== null ? winChances(yours, null) : winChances(rootValue(result.p1 ?? []), rootValue(result.p2 ?? []));
       const swing = luckSwing(afterPrevious, chances.p1);
+      if (swing !== null) swings.push(swing);
       const luck =
         swing !== null && Math.abs(swing) >= 15
           ? `   (moved ${swing > 0 ? '+' : ''}${swing} points ${swing > 0 ? 'your way' : "the opponent's way"} beyond the two moves played: luck, like a crit, a miss or a damage roll, or something revealed, like a Tera or an item)`
@@ -113,7 +115,7 @@ async function main(): Promise<void> {
           const readCost = v.best - v.value;
           const read = readCost >= 0.15 && verdict.tag !== 'good prediction' ? '   <- got read' : '';
           console.log(
-            `      against their actual ${v.reply}: this move ${Math.round(v.value * 100)}%, the best was ${v.bestMove} ${Math.round(v.best * 100)}%${read}`,
+            `      against ${name === 'p1' ? 'their' : 'your'} actual ${v.reply}: this move ${Math.round(v.value * 100)}%, the best was ${v.bestMove} ${Math.round(v.best * 100)}%${read}`,
           );
         }
         if (verdict.tag === 'good prediction' && other !== null) {
@@ -121,7 +123,7 @@ async function main(): Promise<void> {
         }
         if (judgement.tera) {
           const t = judgement.tera;
-          const worthShowing = t.action === 'used' || t.grade !== 'best' || (t.gain ?? 0) >= 0.05;
+          const worthShowing = t.action === 'used' || t.grade !== 'best';
           if (worthShowing) console.log(`      Tera: ${t.grade.toUpperCase()} - ${t.note} ${t.gain === null ? '' : ` (${t.gain >= 0 ? '+' : ''}${(t.gain * 100).toFixed(0)} points)`}`);
         }
       }
@@ -130,6 +132,13 @@ async function main(): Promise<void> {
       afterPrevious = barPair !== undefined && barPair !== null ? 100 * barPair : chanceAfterMoves(values.p1, result.q?.p1 ? null : values.p2);
     }
     console.log('\nSummary');
+    if (swings.length > 0) {
+      // If the bar were exact, what the next turn shows would differ from what the played moves
+      // predicted only by chance, averaging near zero with small spread.
+      const mean = swings.reduce((a, b) => a + b, 0) / swings.length;
+      const spread = swings.reduce((a, b) => a + Math.abs(b), 0) / swings.length;
+      console.log(`  Bar check: next turn differed from the played moves' prediction by ${mean >= 0 ? '+' : ''}${mean.toFixed(1)} points on average (should be near 0), ${spread.toFixed(1)} points either way`);
+    }
     for (const name of ['p1', 'p2'] as const) {
       const sum = summarize(tally[name]);
       const mix = Object.entries(sum.counts).map(([tag, n]) => `${n} ${tag}`).join(', ');
@@ -152,6 +161,20 @@ async function main(): Promise<void> {
     const fit = fitCalibration(train.map((j) => engineRaw[j] as number), train.map((j) => y[j] as number));
     return applyCalibration(fit, score);
   });
+  // The eval bar's value (full information, from the equal-effort table), when the search wrote one.
+  const barRaw = labelled.map((r) => {
+    const value = bestExpectedValue(r.result.bar?.p1);
+    return value === null ? null : value;
+  });
+  // Positions where the bar has no value (every cell of its table could not be simulated) are left out of the bar lines.
+  const barRows = barRaw.map((v, i) => i).filter((i) => barRaw[i] !== null);
+  const haveBar = barRows.length >= Math.max(10, labelled.length / 2);
+  const barValues = barRaw.map((v) => v ?? 0.5);
+  const barCal = barValues.map((score, i) => {
+    const train = barValues.map((_, j) => j).filter((j) => folds[j] !== folds[i]);
+    const fit = fitCalibration(train.map((j) => barValues[j] as number), train.map((j) => y[j] as number));
+    return applyCalibration(fit, score);
+  });
   const model = labelled.map((r) => r.state.model);
   const hasRollout = labelled.every((r) => r.state.rollout !== null);
   const rollout = labelled.map((r) => r.state.rollout ?? r.state.model);
@@ -162,31 +185,61 @@ async function main(): Promise<void> {
     ['engine raw', engineRaw],
     ['engine calibrated', engineCal],
     ['engine calibrated + model (50/50)', blend(engineCal, model)],
+    ...(haveBar
+      ? ([
+          ['eval bar (full information)', barValues],
+          ['eval bar calibrated', barCal],
+          ['eval bar calibrated + model (50/50)', blend(barCal, model)],
+        ] as [string, number[]][])
+      : []),
   ];
   console.log('Log loss against the real winner (lower is better; 0.693 = coin flip):');
   const n = Math.max(1, labelled.length);
   for (const [name, p] of candidates) {
-    const loss = p.reduce((sum, v, i) => sum + logLoss(v, y[i] as number), 0) / n;
-    const right = p.filter((v, i) => v > 0.5 === (y[i] === 1)).length / n;
-    console.log(`  ${name.padEnd(36)} ${loss.toFixed(4)}   accuracy ${(right * 100).toFixed(1)}%`);
+    const onBarRows = name.startsWith('eval bar');
+    const idx = onBarRows ? barRows : labelled.map((_, i) => i);
+    const count = Math.max(1, idx.length);
+    const loss = idx.reduce((sum, i) => sum + logLoss(p[i] as number, y[i] as number), 0) / count;
+    const right = idx.filter((i) => (p[i] as number) > 0.5 === (y[i] === 1)).length / count;
+    console.log(`  ${name.padEnd(36)} ${loss.toFixed(4)}   accuracy ${(right * 100).toFixed(1)}%${onBarRows ? `   (${idx.length} positions)` : ''}`);
+  }
+  if (!haveBar) console.log(`  (eval bar lines left out: only ${barRows.length} of ${labelled.length} positions have a bar value)`);
+
+  // Early positions are close to a coin flip for any estimate, so show accuracy by stage of the game.
+  console.log('\nAccuracy by turn (positions: model alone / engine raw' + (haveBar ? ' / eval bar' : '') + '):');
+  for (const [label, low, high] of [['turns 1-6', 0, 6], ['turns 7-12', 7, 12], ['turns 13+', 13, 999]] as const) {
+    const idx = labelled.map((r, i) => i).filter((i) => {
+      const turn = (labelled[i] as { state: { turn: number } }).state.turn;
+      return turn >= low && turn <= high;
+    });
+    if (idx.length === 0) continue;
+    const acc = (p: readonly number[], only?: readonly number[]): string => {
+      const use = only ? idx.filter((i) => only.includes(i)) : idx;
+      return use.length === 0 ? 'n/a' : `${((use.filter((i) => (p[i] as number) > 0.5 === (y[i] === 1)).length / use.length) * 100).toFixed(0)}%`;
+    };
+    console.log(`  ${label.padEnd(11)} ${String(idx.length).padStart(4)} positions: ${acc(model)} / ${acc(engineRaw)}${haveBar ? ` / ${acc(barValues, barRows)}` : ''}`);
   }
 
   // 2. Do players choose what the engine likes, and how do the grades fall?
   let judged = 0;
   let sameTop = 0;
   const counts = new Map<string, number>();
-  const perGame = new Map<string, { p1: number[]; p2: number[]; y: number | null }>();
+  const perGame = new Map<string, { p1: number[]; p2: number[]; s1: number[]; s2: number[]; y: number | null }>();
   for (const { state, result } of rows) {
     for (const side of ['p1', 'p2'] as const) {
       const list = result[side] ?? [];
-      const judgement = judgeWithEngine(list, state.played[side]);
+      // The same grading as the single-game report: equal-effort values and the actual reply.
+      const other = state.played[side === 'p1' ? 'p2' : 'p1'] ?? null;
+      const judgement = judgeWithEngine(list, state.played[side], result.q?.[side], other);
       if (judgement.grade === 'unknown' || judgement.grade === 'forced') continue;
       judged += 1;
       counts.set(judgement.grade, (counts.get(judgement.grade) ?? 0) + 1);
       const top = [...list].sort((a, b) => b.visits - a.visits)[0];
       if (top && top.engine === state.played[side]) sameTop += 1;
-      const entry = perGame.get(state.id) ?? { p1: [], p2: [], y: state.y };
+      const entry = perGame.get(state.id) ?? { p1: [], p2: [], s1: [], s2: [], y: state.y };
       entry[side].push(Math.max(0, judgement.loss ?? 0));
+      const verdict = verdictFor(judgement, null);
+      if (verdict.score !== null && !verdict.approximate) entry[side === 'p1' ? 's1' : 's2'].push(verdict.score);
       perGame.set(state.id, entry);
     }
   }
@@ -207,7 +260,19 @@ async function main(): Promise<void> {
     if ((a < b) === (game.y === 1)) winnerBetter += 1;
   }
   console.log(`\nGames where the winner had the smaller average loss: ${winnerBetter} of ${compared} (${((winnerBetter / Math.max(1, compared)) * 100).toFixed(0)}%)`);
-  console.log('A coin flip would give 50%.');
+  // The same question with the 0-100 move score the review shows.
+  let scoreCompared = 0;
+  let scoreWinnerBetter = 0;
+  for (const game of perGame.values()) {
+    if (game.y === null || game.s1.length === 0 || game.s2.length === 0) continue;
+    const a = mean(game.s1);
+    const b = mean(game.s2);
+    if (a === b) continue;
+    scoreCompared += 1;
+    if ((a > b) === (game.y === 1)) scoreWinnerBetter += 1;
+  }
+  console.log(`Games where the winner had the higher average score: ${scoreWinnerBetter} of ${scoreCompared} (${((scoreWinnerBetter / Math.max(1, scoreCompared)) * 100).toFixed(0)}%)`);
+  console.log('A coin flip would give 50%; with 120 games, anything between about 41% and 59% cannot be told from a coin flip.');
 }
 
 main().catch((error: unknown) => {
