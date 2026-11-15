@@ -138,6 +138,26 @@ function pokemonState(mon: SimPokemon): EnginePokemon {
   };
 }
 
+/**
+ * Records that a side has already used its Terastallization.
+ *
+ * The simulator deletes a Pokemon's own Terastallized flag when it faints, so a
+ * side whose Tera user has fainted would look as if Tera were available again.
+ * The simulator does keep a side-wide fact: once a side Terastallizes, every one
+ * of its Pokemon has `canTerastallize` cleared. When no Pokemon is flagged but
+ * that fact says Tera is spent, the first fainted Pokemon is flagged instead, which
+ * is enough for the engine, since it only asks whether any Pokemon on the side has
+ * Terastallized.
+ */
+function markTeraUsed(mons: readonly SimPokemon[], states: EnginePokemon[]): void {
+  const raws = mons as unknown as { canTerastallize?: unknown }[];
+  const known = raws.some((raw) => raw.canTerastallize !== undefined);
+  if (!known || raws.some((raw) => Boolean(raw.canTerastallize))) return;
+  if (states.some((state) => state.terastallized)) return;
+  const fainted = states.find((state) => state.hp === 0);
+  if (fainted) fainted.terastallized = true;
+}
+
 function sideState(side: SimSide): EngineSide | null {
   const mons = side.pokemon;
   if (mons.length === 0 || mons.length > 6) return null;
@@ -157,8 +177,11 @@ function sideState(side: SimSide): EngineSide | null {
     if (conditions[key]) out[name] = (conditions[key]?.duration as number | undefined) ?? 1;
   }
 
+  const pokemon = mons.map(pokemonState);
+  markTeraUsed(mons, pokemon);
+
   return {
-    pokemon: mons.map(pokemonState),
+    pokemon,
     activeIndex,
     boosts: {
       atk: boosts.atk ?? 0,
@@ -229,4 +252,25 @@ export function engineOptions(
       ? { choice: option.choice, engine: `switch ${engineId(side.pokemon[option.slot - 1] as SimPokemon)}` }
       : { choice: option.choice, engine: option.tera ? `${option.id}-tera` : option.id },
   );
+}
+
+/**
+ * Hides the Tera types of one side's Pokemon that have not Terastallized yet.
+ *
+ * The replay holds every Pokemon's real Tera type, but a player cannot see the
+ * opponent's until it is used. Grading with it known punishes moves for a Tera
+ * the player could not have predicted (a Normal move looks bad because the
+ * opponent might Tera Ghost). Each unrevealed type is replaced by the Pokemon's
+ * first type, so a Tera there changes nothing about how it takes hits.
+ *
+ * @param state - The full-information state.
+ * @param side - Which side's unrevealed Tera types to hide.
+ * @returns A copy of the state; the input is not changed.
+ */
+export function hideTeraTypes(state: EngineState, side: 'sideOne' | 'sideTwo'): EngineState {
+  const hidden = {
+    ...state[side],
+    pokemon: state[side].pokemon.map((mon) => (mon.terastallized ? mon : { ...mon, teraType: mon.types[0] })),
+  };
+  return { ...state, [side]: hidden };
 }

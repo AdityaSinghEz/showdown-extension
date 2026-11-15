@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { engineId, engineOptions, toEngineState } from '../lib/review/engine-state';
+import { engineId, engineOptions, hideTeraTypes, toEngineState } from '../lib/review/engine-state';
 import type { SimBattle, SimPokemon, SimSide } from '../lib/review/sim';
 
 function mon(id: string, extra: Record<string, unknown> = {}): SimPokemon {
@@ -109,5 +109,51 @@ describe('engineOptions', () => {
     ]);
     expect(names.map((n) => n.engine)).toEqual(['flamethrower', 'flamethrower-tera', 'switch blastoise']);
     expect(engineId(s.pokemon[1] as SimPokemon)).toBe('blastoise');
+  });
+});
+
+describe('hideTeraTypes', () => {
+  it('replaces unrevealed Tera types of one side with the first type and leaves the rest', () => {
+    const full = toEngineState(battle(side(mon('charizard')), side(mon('venusaur'))));
+    if (full === null) throw new Error('state expected');
+    full.sideOne.pokemon[0]!.teraType = 'ghost';
+    full.sideTwo.pokemon[0]!.teraType = 'ghost';
+    const hidden = hideTeraTypes(full, 'sideTwo');
+    expect(hidden.sideTwo.pokemon[0]!.teraType).toBe(hidden.sideTwo.pokemon[0]!.types[0]);
+    expect(hidden.sideOne.pokemon[0]!.teraType).toBe('ghost');
+    expect(full.sideTwo.pokemon[0]!.teraType).toBe('ghost');
+  });
+
+  it('keeps the Tera type of a Pokemon that already Terastallized', () => {
+    const full = toEngineState(battle(side(mon('charizard')), side(mon('venusaur'))));
+    if (full === null) throw new Error('state expected');
+    full.sideTwo.pokemon[0]!.teraType = 'ghost';
+    full.sideTwo.pokemon[0]!.terastallized = true;
+    expect(hideTeraTypes(full, 'sideTwo').sideTwo.pokemon[0]!.teraType).toBe('ghost');
+  });
+});
+
+describe('Tera already used', () => {
+  const spent = (extra: Record<string, unknown> = {}) => ({ canTerastallize: null, ...extra });
+
+  it('flags a fainted Pokemon when the side used Tera but the user fainted and lost its flag', () => {
+    const active = mon('leavanny', spent());
+    const user = mon('basculin', spent({ hp: 0, fainted: true }));
+    const two = { pokemon: [active, user], active: [active] } as unknown as SimSide;
+    const state = toEngineState(battle(side(mon('charizard', { canTerastallize: 'Fire' })), two));
+    expect(state?.sideTwo.pokemon.map((p) => p.terastallized)).toEqual([false, true]);
+    expect(state?.sideOne.pokemon.every((p) => !p.terastallized)).toBe(true);
+  });
+
+  it('leaves a side alone while any of its Pokemon can still Terastallize', () => {
+    const state = toEngineState(
+      battle(side(mon('charizard', { canTerastallize: 'Fire' })), side(mon('venusaur', { canTerastallize: 'Grass' }))),
+    );
+    expect(state?.sideTwo.pokemon.every((p) => !p.terastallized)).toBe(true);
+  });
+
+  it('does not guess when the simulator does not report the flag', () => {
+    const state = toEngineState(battle(side(mon('charizard')), side(mon('venusaur', { hp: 0 }))));
+    expect(state?.sideTwo.pokemon.every((p) => !p.terastallized)).toBe(true);
   });
 });
