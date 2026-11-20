@@ -2,7 +2,7 @@
   "name": "ps-review",
   "description": "Browser extension for Pokemon Showdown: per-battle rating context and performance review.",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -20,6 +20,7 @@
     "engine:review": "tsx scripts/engine-review.ts",
     "engine:report": "tsx scripts/engine-report.ts",
     "engine:inspect": "tsx scripts/engine-inspect.ts",
+    "engine:tune": "tsx scripts/engine-tune.ts",
     "eval:rollout": "tsx scripts/eval-rollout.ts",
     "review:game": "tsx scripts/review-game.ts",
     "states:build": "tsx scripts/build-states.ts",
